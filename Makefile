@@ -45,7 +45,7 @@ dmanh:
 		--vartheta 0.8 \
 		--varphi 0 \
 		--x-min 1.208 \
-		--probe-qubit-index 0
+		--probe-qubit-index 1
 	$(PYTHON) $(SRC)/plots.py \
 		--jaqal $(DMANH_JAQAL) \
 		--output $(DMANH_DIRECT_PNG) \

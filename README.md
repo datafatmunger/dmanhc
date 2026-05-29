@@ -44,6 +44,27 @@ Run the ideal characteristic-function reconstruction:
 python src/measure.py --jaqal build/symmetric_double_well_4ms_sandia.jaqal
 ```
 
+Run with parameters:
+
+```sh
+python src/compiler.py \
+		--output $(DMANH_JAQAL) \
+		--max-time-ms 4 \
+		--dt-us 200 \
+		--delta-hz 754.95 \
+		--alpha0 0.49365 \
+		--vartheta 0.8 \
+		--varphi 0 \
+		--x-min 1.208 \
+		--probe-qubit-index 0
+        
+	$(PYTHON) $(SRC)/plots.py \
+		--jaqal $(DMANH_JAQAL) \
+		--output $(DMANH_DIRECT_PNG) \
+		--title '$(DMANH_DIRECT_TITLE)' \
+		--no-hsim-output
+```
+
 ## Generated Jaqal structure
 
 The compiler emits a program with four conceptual parts:

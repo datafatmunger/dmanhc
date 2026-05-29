@@ -1,16 +1,6 @@
 from __future__ import annotations
 
 """McGarry-style ideal measurement readout for the Sandia xCD program.
-
-Source crosswalk:
-- reference/arXiv-2603.04744v1/anharmonicity.tex, label methods:meas:
-  characteristic-function readout protocol.
-- eq:WignerFT: Wigner reconstruction from chi(beta).
-- Unlabelled equation immediately after the Wigner-position marginal:
-  one-dimensional P(x) reconstruction from chi(i u / sqrt(2)).
-- eq:xexpect and eq:xapprox: position expectation from Im chi and 2PFD.
-- appendix:measurement: mid-circuit measurement and postselection.
-- appendix:motional_meas / fig:probs_cf: 50-point Im[beta] scan over [0, 5].
 """
 
 import argparse
