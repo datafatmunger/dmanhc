@@ -57,7 +57,7 @@ python src/compiler.py \
 		--varphi 0 \
 		--x-min 1.208 \
 		--probe-qubit-index 0
-        
+
 	$(PYTHON) $(SRC)/plots.py \
 		--jaqal $(DMANH_JAQAL) \
 		--output $(DMANH_DIRECT_PNG) \
@@ -165,20 +165,6 @@ The ideal simulator treats `xCD`, `zCD`, and `Rz` as abstract gates on a truncat
 
 The sideband manifold and mode index are passed through to the generated Jaqal as hardware addresses. They are not used by the ideal simulator except to parse the displacement arguments.
 
-## Validation targets
 
-The code is intended to check the following before hardware handoff:
-
-- the generated Jaqal parses locally with pulse autoloading disabled;
-- the initial state is displaced into the intended well;
-- the repeated `xCD/Rz` blocks produce the expected tunnelling-scale motion;
-- the inferred potential parameters match the emitted gate parameters;
-- direct truncated-Fock densities and characteristic-function reconstruction agree in the ideal simulator;
-- `chi(0) = 1` after postselection/normalization;
-- the probe readout matches direct `Re[chi]` and `Im[chi]` in the ideal model.
-
-## Scope
-
-This repository is a compiler/simulation scaffold, not a pulse-level hardware emulator. The Jaqal file is the hardware-facing artifact. The Python simulator is an ideal semantic model used to check gate conventions and expected observables before submission.
 
 
