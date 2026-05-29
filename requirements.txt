@@ -1,0 +1,4 @@
+numpy
+scipy
+matplotlib
+JaqalPaq==1.3.0
