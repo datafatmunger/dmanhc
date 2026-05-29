@@ -135,9 +135,9 @@ This phase advance is part of the McGarry rotating-frame construction. It is not
 |---|---:|---:|
 | `--qubit-index` | qubit used for preparation and evolution | `0` |
 | `--probe-qubit-index` | qubit used for characteristic-function readout | `0` or `1`, depending on compiler default |
-| `--sideband-manifold` | motional manifold address | `1` |
+<!-- | `--sideband-manifold` | motional manifold address | `1` |
 | `--sideband-index` | motional mode address within the manifold | `1` |
-| `--nf-start`, `--nf-end` | optional pulse-calibration Fock-state arguments | `0`, `1` |
+| `--nf-start`, `--nf-end` | optional pulse-calibration Fock-state arguments | `0`, `1` | -->
 
 These are hardware addressing/calibration values. They do not change the abstract McGarry timestep count `K`.
 
