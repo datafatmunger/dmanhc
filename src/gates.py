@@ -30,7 +30,7 @@ def rz_lines(qubit_index: int, angle_rad: float) -> list[str]:
     return [gate_line("Rz", qubit_index, angle_rad)]
 
 
-def sqr_lines(qubit_index: int, vartheta: float, varphi: float) -> list[str]:
+def sqr_lines(qubit_index: int, vartheta: float) -> list[str]:
     if math.isclose(vartheta, 0.0, rel_tol=0.0, abs_tol=1e-14):
         return []
     return [
@@ -93,12 +93,11 @@ def q_block_lines(
     nf_end: int,
     alpha: complex,
     vartheta: float,
-    varphi: float,
 ) -> list[str]:
     # McGarry Eq. 12 defines Q from two SDDs around one SQR.
     return [
         xcd_line(qubit_index, sideband_manifold, sideband_index, alpha, nf_start, nf_end),
-        *sqr_lines(qubit_index, -vartheta, varphi),
+        *sqr_lines(qubit_index, -vartheta),
         xcd_line(qubit_index, sideband_manifold, sideband_index, -alpha, nf_start, nf_end),
     ]
 
@@ -111,11 +110,10 @@ def cosine_gate_lines(
     nf_end: int,
     alpha: complex,
     vartheta: float,
-    varphi: float,
 ) -> list[str]:
-    # McGarry Eq. 15 writes Gc = Q(alpha, theta, phi) Q(-alpha, theta, -phi).
-    # Jaqal source is execution order, so the rightmost Q(-alpha, theta, -phi)
-    # is listed first.
+    # McGarry Eq. 15 writes Gc from two Q blocks. This compiler currently
+    # targets the symmetric phi=0 case, so SQR is emitted as a single Rz.
+    # Jaqal source is execution order, so the rightmost Q(-alpha) is listed first.
     return [
         *q_block_lines(
             qubit_index,
@@ -125,7 +123,6 @@ def cosine_gate_lines(
             nf_end,
             -alpha,
             vartheta,
-            -varphi,
         ),
         *q_block_lines(
             qubit_index,
@@ -135,6 +132,5 @@ def cosine_gate_lines(
             nf_end,
             alpha,
             vartheta,
-            varphi,
         ),
     ]

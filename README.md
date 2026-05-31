@@ -1,8 +1,8 @@
-# dmanhc - CV-DV Double-Well Compiler
+# dmanhc - CV-DV DMANH Compiler
 
-This repository contains a small hardware-facing compiler and ideal simulator for a McGarry-style CV-DV double-well experiment in Sandia/QSCOUT Jaqal vocabulary.
+This repository contains a small hardware-facing compiler and ideal simulator for Phil's DMANH+ double-well experiment in Sandia/QSCOUT Jaqal vocabulary.
 
-The main target is to generate inspectable Jaqal for a displaced motional wavepacket evolving under a symmetric anharmonic double-well sequence, with optional characteristic-function readout through a probe qubit.
+The main target is to generate inspectable Jaqal for a displaced motional wavepacket evolving under the DMANH+ fit parameters. A McGarry-style symmetric double-well benchmark remains available for comparison and uses the same parameter interface.
 
 ## Layout
 
@@ -26,44 +26,45 @@ Install dependencies:
 python -m pip install -r requirements.txt
 ```
 
-Generate the default 4 ms symmetric double-well program:
+Generate Phil's DMANH+ Jaqal and density plot:
 
 ```sh
-python src/compiler.py --output build/symmetric_double_well_4ms_sandia.jaqal
+make dmanh
 ```
 
-Generate plots from the emitted Jaqal:
+Generate the symmetric double-well benchmark and diagnostics:
 
 ```sh
-python src/plots.py --jaqal build/symmetric_double_well_4ms_sandia.jaqal
+make plots
 ```
 
-Run the ideal characteristic-function reconstruction:
-
-```sh
-python src/measure.py --jaqal build/symmetric_double_well_4ms_sandia.jaqal
-```
-
-Run with parameters:
+Run the direct compiler/plot commands for Phil's DMANH+ target:
 
 ```sh
 python src/compiler.py \
-		--output $(DMANH_JAQAL) \
-		--max-time-ms 4 \
-		--dt-us 200 \
-		--delta-hz 754.95 \
-		--alpha0 0.49365 \
-		--vartheta 0.8 \
-		--varphi 0 \
-		--x-min 1.208 \
-		--probe-qubit-index 0
+  --output build/dmanh.jaqal \
+  --steps 49 \
+  --B-rad-s 5.09628e3 \
+  --delta-rad-s 1.29817e3 \
+  --alpha0 0.18512 \
+  --vartheta 0.8 \
+  --x-min 1.208 \
+  --alpha-phase-offset -1.5707963267948966
 
-	$(PYTHON) $(SRC)/plots.py \
-		--jaqal $(DMANH_JAQAL) \
-		--output $(DMANH_DIRECT_PNG) \
-		--title '$(DMANH_DIRECT_TITLE)' \
-		--no-hsim-output
+python src/plots.py \
+  --jaqal build/dmanh.jaqal \
+  --output build/dmanh.png \
+  --title 'Phil DMANH' \
+  --times-ms 0 4.081408 7.691885 \
+  --no-hsim-output
 ```
+
+Both Makefile experiment targets use the same physical parameter form:
+
+| Target | `K` steps | `B` rad/s | `delta` rad/s | `alpha0` | `x_min` | snapshots ms |
+|---|---:|---:|---:|---:|---:|---|
+| `make dmanh` | `49` | `5.09628e3` | `1.29817e3` | `0.18512` | `1.208` | `0, 4.081408, 7.691885` |
+| `make plots` | `20` | `4.0e3` | `3.141592653589793e3` | `0.5235987755982989` | `1.5` | `0, 2.00, 4.00` |
 
 ## Generated Jaqal structure
 
@@ -104,22 +105,32 @@ where `theta = pi/2` selects the imaginary part of the characteristic function. 
 
 | Parameter | Meaning | Default |
 |---|---:|---:|
-| `--max-time-ms` | total simulated evolution time `T` | `4.0` |
-| `--dt-us` | timestep `Delta t` | `200.0` |
-| `--delta-hz` | harmonic frequency `delta / 2pi` | `500.0` |
+| `--steps` | integer McGarry timestep count `K`; derives `T = K Delta t` | unset |
+| `--B-rad-s` | cosine amplitude `B`, with `Delta t = vartheta / B` | unset |
+| `--delta-rad-s` | angular harmonic frequency `delta` | unset |
 | `--alpha0` | displacement amplitude scale `alpha_0` | `pi / 6` |
 | `--vartheta` | cosine-gate angle, with `B = vartheta / Delta t` | `0.8` |
-| `--varphi` | cosine phase; currently intended for symmetric `varphi = 0` | `0.0` |
 | `--x-min` | initial left-well displacement target | `1.5` |
-| `--alpha-phase-offset` | initial phase offset for rotating `alpha_k` | `-pi/2` |
+| `--alpha-phase-offset` | local gate-phase correction aligning the first cosine kick with plotted `x` | `-pi/2` |
 
-The number of McGarry timesteps is computed internally:
+The Makefile targets use angular units directly. The compiler still accepts `--max-time-ms`, `--dt-us`, and `--delta-hz` for manual compatibility runs, but the experiment targets avoid those aliases so the fit-to-compiler map stays explicit.
+
+The compiler can either compute the number of McGarry timesteps from a requested total time,
 
 ```text
 K = T / Delta t
 ```
 
-For example, `T = 4 ms` and `Delta t = 200 us` gives `K = 20` evolution blocks.
+or derive the total time from an explicit integer `K`:
+
+```text
+T = K Delta t
+```
+
+For Phil's DMANH+ fit, `B = 5.09628e3 rad/s` and `vartheta = 0.8` imply
+`Delta t = 156.977246 us`. With `--steps 49`, the total evolution time is
+`7.691885 ms`, with a split-like intermediate snapshot at step 26
+(`4.081408 ms`).
 
 At timestep `k`, the compiler emits
 
@@ -134,7 +145,7 @@ This phase advance is part of the McGarry rotating-frame construction. It is not
 | Parameter | Meaning | Default |
 |---|---:|---:|
 | `--qubit-index` | qubit used for preparation and evolution | `0` |
-| `--probe-qubit-index` | qubit used for characteristic-function readout | `0` or `1`, depending on compiler default |
+| `--probe-qubit-index` | qubit used for characteristic-function readout | `1` |
 <!-- | `--sideband-manifold` | motional manifold address | `1` |
 | `--sideband-index` | motional mode address within the manifold | `1` |
 | `--nf-start`, `--nf-end` | optional pulse-calibration Fock-state arguments | `0`, `1` | -->
@@ -164,7 +175,4 @@ readout/probe: R q[probe] 0 theta + xCD
 The ideal simulator treats `xCD`, `zCD`, and `Rz` as abstract gates on a truncated oscillator Hilbert space. It does not simulate red/blue sideband tones, Rabi rates, Lamb-Dicke factors, pulse calibration, mode crosstalk, heating, or measurement noise.
 
 The sideband manifold and mode index are passed through to the generated Jaqal as hardware addresses. They are not used by the ideal simulator except to parse the displacement arguments.
-
-
-
 

@@ -41,6 +41,10 @@ DEFAULT_CHI_TITLE = "McGarry Fig. 7-style characteristic-function slice"
 DEFAULT_COMPARISON_TITLE = "Direct state access versus McGarry characteristic-function readout"
 
 
+def time_title(time_ms: float) -> str:
+    return f"t = {time_ms:.2f} ms"
+
+
 def plot_panel(
     axis: plt.Axes,
     xs: np.ndarray,
@@ -57,7 +61,7 @@ def plot_panel(
     axis.plot(xs, potential, color="#d97b2d", linewidth=2.0)
     axis.fill_between(xs, potential_min, overlay, color="#2f5aa6", alpha=0.35)
     axis.plot(xs, overlay, color="#2f5aa6", linewidth=1.6)
-    axis.set_title(f"t = {time_ms:.0f} ms")
+    axis.set_title(time_title(time_ms))
     axis.set_xlabel("x")
     axis.grid(alpha=0.15)
 
@@ -176,7 +180,7 @@ def plot_characteristic_slice_panels(
 
         axes[0, column].plot(beta_plot, chi_plot.real, color="#2f5aa6", linewidth=1.8)
         axes[1, column].plot(beta_plot, chi_plot.imag, color="#b3453c", linewidth=1.8)
-        axes[0, column].set_title(f"t = {time_ms:.0f} ms")
+        axes[0, column].set_title(time_title(time_ms))
         axes[1, column].set_xlabel(r"Im[$\beta$]")
         axes[0, column].grid(alpha=0.15)
         axes[1, column].grid(alpha=0.15)

@@ -5,22 +5,89 @@ import cmath
 import math
 from pathlib import Path
 
-from gates import cosine_gate_lines, fmt, sqr_lines, xcd_line, zcd_line
+from gates import cosine_gate_lines, fmt, zcd_line
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = REPO_ROOT / "build" / "double_well.jaqal"
 SANDIA_USEPULSES_MODULE = "Calibration_PulseDefinitions.QubitBosonPulses"
+DEFAULT_MAX_TIME_MS = 4.0
+DEFAULT_DT_US = 200.0
+DEFAULT_DELTA_HZ = 500.0
+
+
+def resolve_evolution_args(args: argparse.Namespace) -> argparse.Namespace:
+    if args.b_rad_s is not None:
+        if math.isclose(args.b_rad_s, 0.0, rel_tol=0.0, abs_tol=1e-15):
+            raise ValueError("--B-rad-s must be nonzero")
+
+        dt_us_from_b = 1.0e6 * args.vartheta / args.b_rad_s
+        if dt_us_from_b <= 0.0:
+            raise ValueError("--B-rad-s and --vartheta must imply a positive timestep")
+        if args.dt_us is not None and not math.isclose(
+            args.dt_us,
+            dt_us_from_b,
+            rel_tol=1e-6,
+            abs_tol=1e-3,
+        ):
+            raise ValueError("--dt-us disagrees with --B-rad-s and --vartheta")
+        args.dt_us = dt_us_from_b
+    elif args.dt_us is None:
+        args.dt_us = DEFAULT_DT_US
+
+    if args.dt_us <= 0.0:
+        raise ValueError("--dt-us must be positive")
+
+    if args.delta_rad_s is not None:
+        if args.delta_hz is not None:
+            delta_rad_s_from_hz = 2.0 * math.pi * args.delta_hz
+            if not math.isclose(
+                args.delta_rad_s,
+                delta_rad_s_from_hz,
+                rel_tol=1e-6,
+                abs_tol=1e-6,
+            ):
+                raise ValueError("--delta-rad-s disagrees with --delta-hz")
+        args.delta_hz = args.delta_rad_s / (2.0 * math.pi)
+    else:
+        if args.delta_hz is None:
+            args.delta_hz = DEFAULT_DELTA_HZ
+        args.delta_rad_s = 2.0 * math.pi * args.delta_hz
+
+    if args.steps is not None:
+        if args.steps <= 0:
+            raise ValueError("--steps must be positive")
+        max_time_ms_from_steps = args.steps * args.dt_us * 1e-3
+        if args.max_time_ms is not None and not math.isclose(
+            args.max_time_ms,
+            max_time_ms_from_steps,
+            rel_tol=1e-9,
+            abs_tol=1e-6,
+        ):
+            raise ValueError("--max-time-ms disagrees with --steps and the resolved --dt-us")
+        args.max_time_ms = max_time_ms_from_steps
+    elif args.max_time_ms is None:
+        args.max_time_ms = DEFAULT_MAX_TIME_MS
+
+    if args.max_time_ms <= 0.0:
+        raise ValueError("--max-time-ms must be positive")
+
+    return args
 
 
 def build_evolution_lines(args: argparse.Namespace) -> list[str]:
     max_time_s = args.max_time_ms / 1000.0
     dt_s = args.dt_us * 1e-6
-    steps = round(max_time_s / dt_s)
-    if not math.isclose(steps * dt_s, max_time_s, rel_tol=0.0, abs_tol=1e-12):
-        raise ValueError("--max-time-ms must be an integer multiple of --dt-us")
+    if getattr(args, "steps", None) is None:
+        steps = round(max_time_s / dt_s)
+        if not math.isclose(steps * dt_s, max_time_s, rel_tol=0.0, abs_tol=1e-12):
+            raise ValueError("--max-time-ms must be an integer multiple of --dt-us")
+    else:
+        steps = args.steps
+        max_time_s = steps * dt_s
 
-    delta = 2.0 * math.pi * args.delta_hz
+    delta = getattr(args, "delta_rad_s", 2.0 * math.pi * args.delta_hz)
+    amplitude = args.vartheta / dt_s
     prep_beta = args.x_min / math.sqrt(2.0)
 
     lines: list[str] = [
@@ -42,6 +109,9 @@ def build_evolution_lines(args: argparse.Namespace) -> list[str]:
         "// One timestep is one McGarry cosine gate Gc, expanded into two Q-blocks.",
         f"// alpha phase offset = {fmt(args.alpha_phase_offset)} rad.",
         f"// harmonic delta = {fmt(delta)} rad/s.",
+        f"// cosine amplitude B = {fmt(amplitude)} rad/s.",
+        f"// steps = {steps}.",
+        f"// total evolution time = {fmt(max_time_s * 1000.0)} ms.",
         f"// timestep = {fmt(args.dt_us)} us.",
     ]
 
@@ -59,7 +129,6 @@ def build_evolution_lines(args: argparse.Namespace) -> list[str]:
                 args.nf_end,
                 alpha,
                 args.vartheta,
-                args.varphi,
             )
         )
 
@@ -132,19 +201,25 @@ def xcd_readout_line(
 # Evolution model:
 #   --max-time-ms
 #       Total simulated time T = K Delta t in eqs. time_trott/state_evo.
-#       The default 4 ms matches the symmetric-well tunnelling snapshot in
-#       fig:symmetric.
+#       The default 4 ms is used when --steps is not provided. If --steps is
+#       provided, the compiler derives T from K Delta t instead.
+#   --steps
+#       Integer number of McGarry timesteps K. This is the preferred way to
+#       avoid asking for a total time that is not on the timestep grid.
 #   --dt-us
 #       Simulated timestep Delta t in eqs. time_trott, trig_gate, and
-#       Gc_params. The compiler emits K = max_time_ms / dt_us cosine gates.
-#       McGarry's hardware run used Delta t = 200 us with vartheta = 0.8.
-#       The compiler default, Delta t = 20 us with vartheta = 0.08, keeps the
-#       same potential strength B = vartheta / Delta t while using finer
-#       Trotter steps.
+#       Gc_params. When --B-rad-s is provided, the compiler derives
+#       Delta t = vartheta / B.
+#   --B-rad-s
+#       Cosine amplitude B in H_sim/Gc_params. This is not emitted as a
+#       separate Jaqal value; it is realized by the pair vartheta and Delta t.
 #   --delta-hz
 #       delta / (2 pi) in H_sim and Gc_params. The compiler converts this to
 #       angular frequency delta and uses it in zeta_k = zeta_0 + k delta
 #       Delta t. McGarry's symmetric run uses 500 Hz.
+#   --delta-rad-s
+#       Direct angular-frequency form of delta. This is useful when the fit
+#       reports delta in rad/s, as in Phil's DMANH+ notes.
 #   --alpha0
 #       alpha_0 in the SDD amplitude alpha = alpha_0 exp(i zeta), eqs. R_phi,
 #       Q_def/Q, and Gc_params. For the single-Fourier double well,
@@ -157,12 +232,7 @@ def xcd_readout_line(
 #   --vartheta
 #       SQR angle vartheta and trigonometric-gate strength, eqs. R_phi,
 #       cosine_evo, and Gc_params. It satisfies vartheta = B Delta t. McGarry's
-#       symmetric hardware value is 0.8; the compiler default 0.08 is paired
-#       with the ten-times-smaller default timestep above.
-#   --varphi
-#       varphi in R_varphi(vartheta) and Phi in H_sim/Gc_params. varphi = 0
-#       gives the symmetric double well; the paper's asymmetric examples vary
-#       this phase, e.g. -pi/20 and -pi/10.
+#       symmetric hardware value and the compiler default are 0.8.
 #   --x-min
 #       x_min in the initialisation method. The compiler prepares the left-well
 #       state by emitting D(-sigma_x x_min / sqrt(2)); McGarry uses x_min = 1.5.
@@ -200,13 +270,44 @@ def xcd_readout_line(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--max-time-ms", type=float, default=4.0)
-    parser.add_argument("--dt-us", type=float, default=200.0)
-    parser.add_argument("--delta-hz", type=float, default=500.0)
+    parser.add_argument(
+        "--max-time-ms",
+        type=float,
+        default=None,
+        help=(
+            f"Total simulated time. Defaults to {DEFAULT_MAX_TIME_MS:g} ms "
+            "unless --steps is provided."
+        ),
+    )
+    parser.add_argument("--steps", type=int, default=None, help="Integer McGarry timestep count K.")
+    parser.add_argument(
+        "--dt-us",
+        type=float,
+        default=None,
+        help=(
+            f"Timestep in microseconds. Defaults to {DEFAULT_DT_US:g} unless "
+            "--B-rad-s is provided."
+        ),
+    )
+    parser.add_argument(
+        "--B-rad-s",
+        "--b-rad-s",
+        "--cosine-amplitude-rad-s",
+        dest="b_rad_s",
+        type=float,
+        default=None,
+        help="Cosine amplitude B in rad/s; derives dt_us = 1e6 * vartheta / B.",
+    )
+    parser.add_argument(
+        "--delta-hz",
+        type=float,
+        default=None,
+        help=f"Harmonic frequency delta / (2 pi). Defaults to {DEFAULT_DELTA_HZ:g} Hz.",
+    )
+    parser.add_argument("--delta-rad-s", type=float, default=None, help="Angular harmonic frequency delta.")
     parser.add_argument("--alpha0", type=float, default=math.pi / 6.0)
     parser.add_argument("--alpha-phase-offset", type=float, default=-math.pi / 2.0)
     parser.add_argument("--vartheta", type=float, default=0.8)
-    parser.add_argument("--varphi", type=float, default=0.0)
     parser.add_argument("--x-min", type=float, default=1.5)
     parser.add_argument("--qubit-index", type=int, default=0)
     parser.add_argument("--sideband-manifold", type=int, default=1)
@@ -218,8 +319,8 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help=(
-            "Probe qubit for hardware readout. Defaults to same-qubit McGarry "
-            "readout; use 1 for the two-qubit QSCOUT-notebook layout."
+            "Probe qubit for hardware readout. Defaults to 1 for the "
+            "two-qubit QSCOUT-notebook layout; use 0 for same-qubit McGarry readout."
         ),
     )
     parser.add_argument(
@@ -241,7 +342,7 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Default imMeas loop value: 1 emits Rz(pi/2) before xCD readout.",
     )
-    return parser.parse_args()
+    return resolve_evolution_args(parser.parse_args())
 
 
 def main() -> None:
