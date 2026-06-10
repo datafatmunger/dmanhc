@@ -92,7 +92,7 @@ def build_evolution_lines(args: argparse.Namespace) -> list[str]:
 
     lines: list[str] = [
         "// Symmetric McGarry double-well using Sandia/QSCOUT gate vocabulary.",
-        "// Sandia xCD(beta) implements D(beta sigma_x), matching McGarry SDD alpha.",
+        "// Sandia xCD arguments carry McGarry alpha values alpha0 exp(i zeta).",
         "// McGarry SQR rotations are decomposed into Sandia Rz gates.",
         "",
         "// Wavepacket preparation: |down>|0> -> |down>|x=-x_min> using zCD.",
@@ -119,7 +119,10 @@ def build_evolution_lines(args: argparse.Namespace) -> list[str]:
         zeta = args.alpha_phase_offset + delta * step * dt_s
         alpha = args.alpha0 * cmath.exp(1j * zeta)
         lines.append("")
-        lines.append(f"// step {step}: t = {fmt(step * dt_s * 1000.0)} ms")
+        lines.append(
+            f"// evolution step {step + 1}: k = {step}, "
+            f"interval {fmt(step * dt_s * 1000.0)} -> {fmt((step + 1) * dt_s * 1000.0)} ms"
+        )
         lines.extend(
             cosine_gate_lines(
                 args.qubit_index,
@@ -145,17 +148,23 @@ def build_program(args: argparse.Namespace) -> str:
         readout_layout = "// Readout uses a separate probe qubit, matching the QSCOUT notebook pattern."
 
     register_size = max(args.qubit_index, args.probe_qubit_index) + 1
+    requested_readout_beta = complex(args.readout_re_beta, args.readout_im_beta)
+    # Current Sandia/DMANH convention: xCD(s) realizes mathematical D(-i s).
+    # McGarry readout wants D(sigma_x beta/2), so the emitted Sandia argument is s=i beta/2.
+    # Previous local mathematical convention:
+    # readout_sandia_beta = 0.5 * requested_readout_beta
+    readout_sandia_beta = 0.5j * requested_readout_beta
     lines = [
         f"from {SANDIA_USEPULSES_MODULE} usepulses *",
         "",
         "// Hardware-facing characteristic-function measurement program.",
-        "// McGarry methods:meas measures chi(beta) with xCD(beta/2), then measure_all.",
+        "// McGarry methods:meas measures chi(beta) with a mapped xCD beta/2, then measure_all.",
         readout_layout,
         "// Set imMeas=1 to prepend Rx(pi/2), written as R q[probe] 0 pi/2.",
         "// Defaults target McGarry Eq. xapprox 2PFD: chi beta=i*h with h=0.4.",
-        "// reBeta/imBeta are direct Sandia xCD arguments, so they are chi beta / 2.",
-        f"let reBeta {fmt(0.5 * args.readout_re_beta)}",
-        f"let imBeta {fmt(0.5 * args.readout_im_beta)}",
+        "// reBeta/imBeta are Sandia xCD arguments mapped from McGarry chi beta / 2.",
+        f"let reBeta {fmt(readout_sandia_beta.real)}",
+        f"let imBeta {fmt(readout_sandia_beta.imag)}",
         f"let imMeas {args.imaginary_readout_loop}",
         "",
         f"register q[{register_size}]",
@@ -226,9 +235,9 @@ def xcd_readout_line(
 #       alpha_0 = pi / (sqrt(2) Lambda). McGarry's symmetric run uses pi / 6.
 #   --alpha-phase-offset
 #       Compiler phase zeta_0 added to McGarry's zeta = k delta Delta t in
-#       Gc_params. With the local Sandia xCD convention, the default -pi/2
-#       makes the first cosine gate act on x rather than p; set this to 0 to
-#       follow the literal phase origin in the paper text.
+#       Gc_params. The default 0 follows the Sandia/DMANH convention that the
+#       xCD argument directly carries alpha_0 exp(i zeta). The old local
+#       mathematical-displacement convention used -pi/2 here.
 #   --vartheta
 #       SQR angle vartheta and trigonometric-gate strength, eqs. R_phi,
 #       cosine_evo, and Gc_params. It satisfies vartheta = B Delta t. McGarry's
@@ -256,11 +265,11 @@ def xcd_readout_line(
 # Characteristic-function readout:
 #   --readout-re-beta, --readout-im-beta
 #       McGarry measurement coordinate beta in chi(beta) = <D(beta)>. The
-#       emitted Sandia xCD variables are half of these values, because the
+#       emitted Sandia xCD variables are mapped from beta / 2 because the
 #       readout circuit applies D(sigma_x beta / 2). Defaults beta = i 0.4,
 #       matching the 2PFD h = 0.4 choice in eq. xapprox.
 #   --imaginary-readout-loop
-#       Toggle for the optional prepended Rz(pi/2) in the generated readout
+#       Toggle for the optional prepended R(0, pi/2) in the generated readout
 #       block.
 #
 # Output-only parameter:
@@ -306,7 +315,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--delta-rad-s", type=float, default=None, help="Angular harmonic frequency delta.")
     parser.add_argument("--alpha0", type=float, default=math.pi / 6.0)
-    parser.add_argument("--alpha-phase-offset", type=float, default=-math.pi / 2.0)
+    parser.add_argument("--alpha-phase-offset", type=float, default=0.0)
     parser.add_argument("--vartheta", type=float, default=0.8)
     parser.add_argument("--x-min", type=float, default=1.5)
     parser.add_argument("--qubit-index", type=int, default=0)
@@ -340,7 +349,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         choices=[0, 1],
         default=1,
-        help="Default imMeas loop value: 1 emits Rz(pi/2) before xCD readout.",
+        help="Default imMeas loop value: 1 emits R q[probe] 0 pi/2 before xCD readout.",
     )
     return resolve_evolution_args(parser.parse_args())
 

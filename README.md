@@ -26,7 +26,7 @@ Install dependencies:
 python -m pip install -r requirements.txt
 ```
 
-Generate Phil's DMANH+ Jaqal and density plot:
+Generate Phil's DMANH+ Jaqal, density plot, `H_sim` trace, and readout/chi plots:
 
 ```sh
 make dmanh
@@ -48,22 +48,32 @@ python src/compiler.py \
   --delta-rad-s 1.29817e3 \
   --alpha0 0.18512 \
   --vartheta 0.8 \
-  --x-min 1.208 \
-  --alpha-phase-offset -1.5707963267948966
+  --x-min 1.25895 \
+  --alpha-phase-offset 0
 
 python src/plots.py \
   --jaqal build/dmanh.jaqal \
   --output build/dmanh.png \
-  --title 'Phil DMANH' \
+  --title 'DMANH+' \
   --times-ms 0 4.081408 7.691885 \
-  --no-hsim-output
+  --hsim-output build/dmanh_hsim.png \
+  --hsim-title 'DMANH+ exact $H_{\mathrm{sim}}$ versus compiled-gate dynamics' \
+  --hsim-max-time-ms 7.6918850612603702
+
+python src/measure.py \
+  --jaqal build/dmanh.jaqal \
+  --output build/dmanh_measurement_panels.png \
+  --title 'DMANH+ McGarry Eq. 33 readout from chi(beta)' \
+  --times-ms 0 4.081408 7.691885 \
+  --chi-output build/dmanh_chi_slice_panels.png \
+  --chi-title 'DMANH+ characteristic-function slice'
 ```
 
 Both Makefile experiment targets use the same physical parameter form:
 
 | Target | `K` steps | `B` rad/s | `delta` rad/s | `alpha0` | `x_min` | snapshots ms |
 |---|---:|---:|---:|---:|---:|---|
-| `make dmanh` | `49` | `5.09628e3` | `1.29817e3` | `0.18512` | `1.208` | `0, 4.081408, 7.691885` |
+| `make dmanh` | `49` | `5.09628e3` | `1.29817e3` | `0.18512` | `1.25895` | `0, 4.081408, 7.691885` |
 | `make plots` | `20` | `4.0e3` | `3.141592653589793e3` | `0.5235987755982989` | `1.5` | `0, 2.00, 4.00` |
 
 ## Generated Jaqal structure
@@ -91,7 +101,7 @@ xCD
 
 Preparation uses `zCD` so the initially prepared qubit, assumed to be in a Z-basis state, gives an ordinary displacement of the motional wavepacket rather than an X-basis conditional cat state.
 
-Readout, when included, follows the QSCOUT characteristic-function pattern: an optional probe-qubit X rotation followed by `xCD(beta/2)` and Z-basis measurement. In Jaqal this may be emitted as the notebook-style generic rotation
+Readout, when included, follows the QSCOUT characteristic-function pattern: an optional probe-qubit X rotation followed by a Sandia `xCD` argument mapped from McGarry's mathematical `D(sigma_x beta/2)` and Z-basis measurement. In Jaqal the rotation may be emitted as the notebook-style generic rotation
 
 ```text
 R q[probe] 0 theta
@@ -111,7 +121,7 @@ where `theta = pi/2` selects the imaginary part of the characteristic function. 
 | `--alpha0` | displacement amplitude scale `alpha_0` | `pi / 6` |
 | `--vartheta` | cosine-gate angle, with `B = vartheta / Delta t` | `0.8` |
 | `--x-min` | initial left-well displacement target | `1.5` |
-| `--alpha-phase-offset` | local gate-phase correction aligning the first cosine kick with plotted `x` | `-pi/2` |
+| `--alpha-phase-offset` | optional extra phase added to McGarry `zeta = k Delta t`; default follows Sandia/DMANH direct xCD convention | `0` |
 
 The Makefile targets use angular units directly. The compiler still accepts `--max-time-ms`, `--dt-us`, and `--delta-hz` for manual compatibility runs, but the experiment targets avoid those aliases so the fit-to-compiler map stays explicit.
 
@@ -160,7 +170,7 @@ These are hardware addressing/calibration values. They do not change the abstrac
 | `--readout-im-beta` | imaginary part of requested characteristic-function coordinate | `0.4` |
 | `--imaginary-readout-loop` | when `1`, prepend `R q[probe] 0 pi/2` before readout | `1` |
 
-The generated readout `xCD` uses half of the requested characteristic-function coordinate because the probe protocol applies `D(sigma_x beta / 2)`.
+The generated readout `xCD` is mapped from half of the requested characteristic-function coordinate because the probe protocol applies `D(sigma_x beta / 2)`. With the current Sandia/DMANH convention, the Sandia argument `s` is converted to the mathematical displacement `D(-i s)`.
 
 ## Gate conventions
 
@@ -176,3 +186,39 @@ The ideal simulator treats `xCD`, `zCD`, and `Rz` as abstract gates on a truncat
 
 The sideband manifold and mode index are passed through to the generated Jaqal as hardware addresses. They are not used by the ideal simulator except to parse the displacement arguments.
 
+
+
+
+
+
+
+My read, item by item:
+
+  1. Initial zCD displacement
+     Current build/dmanh.jaqal:23 uses 0.85418499167334927, which is 1.208 / sqrt(2). That comes directly from src/compiler.py:91.
+
+     But if I recompute the well minimum from the DMANH potential parameters, I get:
+     x_min ≈ 1.2589101853, hence x_min / sqrt(2) ≈ 0.8901839289.
+
+     So if Overleaf section 3.1 derives the minimum from the fitted potential, then yes, our magnitude is likely stale/wrong. There is also a separate
+     sign-convention question for zCD.
+
+  2. Elapsed time t=0
+     Feedback is correct if t=0 means “prepare, then immediately measure.” That circuit should have no evolution displacements.
+
+     The generated comment // step 0: t = 0 ms currently means “first Trotter interval, evaluating the potential at time 0,” not “measurement at elapsed
+     time 0.” That first interval does contain xCD gates. We probably need separate generated circuits for measurement after 0, 26, and 49 steps, rather
+     than one final-time program.
+
+  3. First xCD is imaginary
+     This is due to our explicit alpha_phase_offset = -pi/2. At step 0:
+
+     alpha = alpha0 * exp(i * (-pi/2)) = -i * 0.18512
+
+     and the first emitted gate uses -alpha, so it becomes +i * 0.18512.
+
+     If we follow the paper’s literal zeta = k delta Delta t with no local offset, the first emitted xCD would be real, roughly -0.18512 0. Also, B Delta t
+     = 0.8 is vartheta, not zeta; the phase advance is delta Delta t ≈ 0.203783.
+
+  So the likely real issues are: x_min magnitude, separate zero-evolution measurement circuits, and whether our -pi/2 phase offset is the convention they
+  want.

@@ -14,7 +14,7 @@ CHI_TITLE ?= McGarry Fig. 7-style characteristic-function slice
 COMPARISON_TITLE ?= Direct state access versus McGarry characteristic-function readout
 
 VARTHETA ?= 0.8
-ALPHA_PHASE_OFFSET ?= -1.5707963267948966
+ALPHA_PHASE_OFFSET ?= 0 # -1.5707963267948966
 
 DOUBLE_WELL_STEPS ?= 20
 DOUBLE_WELL_B_RAD_S ?= 4.0e3
@@ -25,13 +25,20 @@ DOUBLE_WELL_TIMES_MS ?= 0 2.00 4.00
 
 DMANH_JAQAL ?= $(BUILD_DIR)/dmanh.jaqal
 DMANH_DIRECT_PNG ?= $(BUILD_DIR)/dmanh.png
-DMANH_DIRECT_TITLE ?= Phil DMANH
+DMANH_HSIM_PNG ?= $(BUILD_DIR)/dmanh_hsim.png
+DMANH_MEASUREMENT_PNG ?= $(BUILD_DIR)/dmanh_measurement_panels.png
+DMANH_CHI_PNG ?= $(BUILD_DIR)/dmanh_chi_slice_panels.png
+DMANH_DIRECT_TITLE ?= DMANH+
+DMANH_HSIM_TITLE ?= DMANH+ exact $$H_{\mathrm{sim}}$$ versus compiled-gate dynamics
+DMANH_MEASUREMENT_TITLE ?= DMANH+ McGarry Eq. 33 readout from chi(beta)
+DMANH_CHI_TITLE ?= DMANH+ characteristic-function slice
 DMANH_STEPS ?= 49
 DMANH_B_RAD_S ?= 5.09628e3
 DMANH_DELTA_RAD_S ?= 1.29817e3
 DMANH_ALPHA0 ?= 0.18512
-DMANH_X_MIN ?= 1.208
+DMANH_X_MIN ?= 1.25895
 DMANH_TIMES_MS ?= 0 4.081408 7.691885
+DMANH_HSIM_MAX_TIME_MS ?= 7.6918850612603702
 
 .DEFAULT_GOAL := dmanh
 
@@ -74,4 +81,13 @@ dmanh:
 		--output $(DMANH_DIRECT_PNG) \
 		--title '$(DMANH_DIRECT_TITLE)' \
 		--times-ms $(DMANH_TIMES_MS) \
-		--no-hsim-output
+		--hsim-output $(DMANH_HSIM_PNG) \
+		--hsim-title '$(DMANH_HSIM_TITLE)' \
+		--hsim-max-time-ms $(DMANH_HSIM_MAX_TIME_MS)
+	$(PYTHON) $(SRC)/measure.py \
+		--jaqal $(DMANH_JAQAL) \
+		--output $(DMANH_MEASUREMENT_PNG) \
+		--title '$(DMANH_MEASUREMENT_TITLE)' \
+		--times-ms $(DMANH_TIMES_MS) \
+		--chi-output $(DMANH_CHI_PNG) \
+		--chi-title '$(DMANH_CHI_TITLE)'

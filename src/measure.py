@@ -30,7 +30,7 @@ from simulator import (
     ho_basis_functions,
     jaqal_timestep_us,
     load_program_model_and_snapshots,
-    rz_matrix,
+    r_matrix,
 )
 
 
@@ -91,16 +91,18 @@ def probe_initial_vector(state: str) -> np.ndarray:
 
 def conditional_displacement_unitary(beta: complex, cutoff: int) -> np.ndarray:
     # McGarry methods:meas reads chi(beta)=<D(beta)> by applying
-    # D(sigma_x beta/2). Sandia xCD's direct displacement argument is therefore
-    # beta/2 for this readout block.
-    sandia_xcd_beta = 0.5 * beta
+    # D(sigma_x beta/2). The generated Sandia argument is s=i beta/2 because
+    # xCD(s) realizes D(-i s), but this ideal check can use beta/2 directly.
+    # Previous local mathematical convention for the emitted xCD:
+    # sandia_xcd_beta = 0.5 * beta
+    math_beta = 0.5 * beta
     plus = np.array([1.0, 1.0], dtype=np.complex128) / math.sqrt(2.0)
     minus = np.array([1.0, -1.0], dtype=np.complex128) / math.sqrt(2.0)
     plus_projector = np.outer(plus, plus.conj())
     minus_projector = np.outer(minus, minus.conj())
-    return np.kron(plus_projector, displacement_matrix(sandia_xcd_beta, cutoff)) + np.kron(
+    return np.kron(plus_projector, displacement_matrix(math_beta, cutoff)) + np.kron(
         minus_projector,
-        displacement_matrix(-sandia_xcd_beta, cutoff),
+        displacement_matrix(-math_beta, cutoff),
     )
 
 
@@ -108,18 +110,18 @@ def probe_z_expectation(
     rho: np.ndarray,
     cutoff: int,
     beta: complex,
-    use_rz_rotation: bool,
+    use_x_rotation: bool,
     rotation_angle: float,
     probe_initial_state: str,
 ) -> float:
     probe_vector = probe_initial_vector(probe_initial_state)
-    if use_rz_rotation and not math.isclose(
+    if use_x_rotation and not math.isclose(
         rotation_angle,
         0.0,
         rel_tol=0.0,
         abs_tol=1e-14,
     ):
-        probe_vector = rz_matrix(rotation_angle) @ probe_vector
+        probe_vector = r_matrix(0.0, rotation_angle) @ probe_vector
 
     probe_rho = np.outer(probe_vector, probe_vector.conj())
     joint_rho = np.kron(probe_rho, rho)
@@ -138,23 +140,23 @@ def probe_readout_check(
     probe_initial_state: str,
 ) -> dict[str, float | complex]:
     # This explicitly emulates the ideal version of the generated readout block
-    #   optional Rz(pi/2); xCD(beta/2); measure Z
+    #   optional R(0, pi/2); mapped xCD beta/2; measure Z
     # and compares it to the direct McGarry characteristic function. The two
-    # sign-error columns keep the Rz/qubit-basis convention visible.
+    # sign-error columns keep the X-rotation/qubit-basis convention visible.
     chi = characteristic_function(beta, rho, cutoff)
     z_no_rotation = probe_z_expectation(
         rho,
         cutoff,
         beta,
-        use_rz_rotation=False,
+        use_x_rotation=False,
         rotation_angle=0.0,
         probe_initial_state=probe_initial_state,
     )
-    z_rz_pi_2 = probe_z_expectation(
+    z_rx_pi_2 = probe_z_expectation(
         rho,
         cutoff,
         beta,
-        use_rz_rotation=True,
+        use_x_rotation=True,
         rotation_angle=math.pi / 2.0,
         probe_initial_state=probe_initial_state,
     )
@@ -162,10 +164,10 @@ def probe_readout_check(
         "probe_beta": beta,
         "probe_chi": chi,
         "probe_z_no_rotation": z_no_rotation,
-        "probe_z_rz_pi_2": z_rz_pi_2,
+        "probe_z_rx_pi_2": z_rx_pi_2,
         "probe_re_abs_error": abs(z_no_rotation - chi.real),
-        "probe_rz_pi_2_minus_im_abs_error": abs(z_rz_pi_2 - chi.imag),
-        "probe_rz_pi_2_plus_im_abs_error": abs(z_rz_pi_2 + chi.imag),
+        "probe_rx_pi_2_minus_im_abs_error": abs(z_rx_pi_2 - chi.imag),
+        "probe_rx_pi_2_plus_im_abs_error": abs(z_rx_pi_2 + chi.imag),
     }
 
 
@@ -485,8 +487,8 @@ def main() -> None:
     print(
         "readout_state,time_ms,postselection_probability,chi0_error,"
         "max_abs_error,relative_l2_error,x_direct,x_2pfd,x_2pfd_abs_error,chi_ih_imag,"
-        "probe_z_no_rotation,probe_re_abs_error,probe_z_rz_pi_2,"
-        "probe_rz_pi_2_minus_im_abs_error,probe_rz_pi_2_plus_im_abs_error"
+        "probe_z_no_rotation,probe_re_abs_error,probe_z_rx_pi_2,"
+        "probe_rx_pi_2_minus_im_abs_error,probe_rx_pi_2_plus_im_abs_error"
     )
     for time_ms in args.times_ms:
         result = results[time_ms]
@@ -504,9 +506,9 @@ def main() -> None:
             f"{chi_ih.imag:.12g},"
             f"{result['probe_z_no_rotation']:.12g},"
             f"{result['probe_re_abs_error']:.12g},"
-            f"{result['probe_z_rz_pi_2']:.12g},"
-            f"{result['probe_rz_pi_2_minus_im_abs_error']:.12g},"
-            f"{result['probe_rz_pi_2_plus_im_abs_error']:.12g}"
+            f"{result['probe_z_rx_pi_2']:.12g},"
+            f"{result['probe_rx_pi_2_minus_im_abs_error']:.12g},"
+            f"{result['probe_rx_pi_2_plus_im_abs_error']:.12g}"
         )
 
 

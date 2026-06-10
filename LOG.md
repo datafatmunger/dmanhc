@@ -1,0 +1,68 @@
+# DMANH Compiler Log
+
+## 2026-06-10
+
+- Checked McGarry/QSCOUT characteristic-function readout conventions against the local reference material.
+  - McGarry readout measures `chi(beta)=<D(beta)>` by applying `D(sigma_x beta/2)` followed by Z-basis qubit measurement.
+  - No prepended pulse gives `Re[chi(beta)]`; prepending `Rx(pi/2)` gives `Im[chi(beta)]`.
+  - QSCOUT `R q 0 pi/2` is an X-axis equatorial rotation, not `Rz`.
+
+- Fixed the ideal readout check in `src/measure.py`.
+  - Previous check used an `Rz(pi/2)` matrix for the imaginary selector.
+  - Current check uses the same generic X-axis `R(0, pi/2)` pulse emitted by the compiler.
+  - CSV diagnostic column names were changed from `rz_pi_2` to `rx_pi_2`.
+
+- Clarified generated evolution-step comments in `src/compiler.py`.
+  - Previous comments looked like a measured `t=0` state: `// step 0: t = 0 ms`.
+  - Current comments label the first block as an evolution interval: `evolution step 1: k = 0, interval 0 -> Delta t`.
+  - No separate zero-evolution measurement circuit has been added yet.
+
+- Updated DMANH+ initialization parameters.
+  - Phil's Section 3 computes the well minimum from `V(x)=delta x^2/2 + B cos(2 pi x / Lambda)`.
+  - With `delta=1.29817e3`, `B=5.09628e3`, and `alpha0=pi/(12 sqrt(2))`, the minima are near `x=+-1.25895`.
+  - The corresponding preparation value is `x_min/sqrt(2)=0.8902`.
+  - `Makefile` now uses `DMANH_X_MIN ?= 1.25895`.
+
+- Switched the hardware-facing alpha phase convention.
+  - Previous local convention used `ALPHA_PHASE_OFFSET=-pi/2` so the abstract mathematical displacement simulator plotted position-space dynamics correctly.
+  - Phil's Sandia/DMANH convention treats the Jaqal `xCD` argument as the requested McGarry `alpha0 exp(i zeta)`, with `zeta=k delta Delta t`.
+  - `ALPHA_PHASE_OFFSET` is now `0`, with the old `-pi/2` value left in a comment.
+
+- Inlined the Sandia xCD convention at the relevant call sites.
+  - Previous local mathematical convention is kept commented where the mapping is applied.
+  - `src/simulator.py` maps a Sandia xCD argument `s` to the mathematical displacement parameter `-i s`.
+  - `src/compiler.py` maps McGarry readout `beta` to emitted Sandia argument `s=i beta/2`.
+  - `src/measure.py` builds the ideal readout unitary directly as mathematical `D(sigma_x beta/2)`.
+
+- Updated readout mapping for the new Sandia/DMANH convention.
+  - Since `xCD(s)` now emulates mathematical `D(-i s)`, McGarry readout `D(sigma_x beta/2)` requires Sandia argument `s=i beta/2`.
+  - For the default 2PFD coordinate `beta=i 0.4`, generated Jaqal should use `reBeta=-0.2`, `imBeta=0`.
+  - Added `MEASUREMENT_DERIVATION.md` with the hand calculation for `Re[chi]`,
+    `Im[chi]`, and the `s=i beta/2` compiler mapping.
+
+- Added a Phil-style measurement audit to `MEASUREMENT_DERIVATION.md`.
+  - For the current generated DMANH+ program, the note records
+    `chi(i0.4)`, no-rotation probe expectation, `Rx(pi/2)` probe expectation,
+    direct `<x>`, and 2PFD `<x>` at `0`, `4.081408`, and `7.691885` ms.
+  - The check verifies that `probe_z_no_rotation = Re[chi(i0.4)]` and
+    `probe_z_rx_pi_2 = Im[chi(i0.4)]` to numerical roundoff in `src/measure.py`.
+  - Noted a remaining hardware-analysis sign convention to confirm: the QSCOUT
+    notebook computes `state0 - state1`, while its comments identify `state1`
+    as probe spin-up in one helper. That may be `P_down - P_up`, i.e. the
+    negative of the simulator's `sigma_z = P_up - P_down`.
+
+- Regenerated `build/dmanh.jaqal`.
+  - Preparation now emits `zCD ... 0.89021208217480396 0`.
+  - Evolution uses `alpha phase offset = 0`.
+  - First evolution `xCD` is real, matching Phil's expectation for `k=0`.
+
+- Expanded the `make dmanh` plotting outputs.
+  - `src/plots.py` now emits both `build/dmanh.png` and `build/dmanh_hsim.png` for the DMANH+ target.
+  - The DMANH+ `H_sim` trace uses `--hsim-max-time-ms 7.6918850612603702`, the exact `49 Delta t` endpoint required by the timestep-grid check.
+  - `src/measure.py` now emits `build/dmanh_measurement_panels.png` and `build/dmanh_chi_slice_panels.png` for the same DMANH+ times.
+
+Open questions:
+
+- Whether to generate separate hardware programs for `0`, `26`, and `49` evolution steps before readout.
+- Whether the `zCD` simulator path should also be routed through a named convention helper, or remain direct because it is being used as a preparation shortcut.
+- Whether to clean the appended scratch notes currently present at the end of `README.md`.

@@ -291,12 +291,16 @@ def postselected_x_expectation(
     )
 
 
-def apply_xcd(state: np.ndarray, alpha: complex, cutoff: int) -> np.ndarray:
+def apply_xcd(state: np.ndarray, sandia_alpha: complex, cutoff: int) -> np.ndarray:
     amplitudes = state.reshape((2, cutoff))
     z_to_x = np.array([[1.0, 1.0], [1.0, -1.0]], dtype=np.complex128) / math.sqrt(2.0)
     x_amplitudes = z_to_x.conj().T @ amplitudes
-    x_amplitudes[0] = displacement_matrix(alpha, cutoff) @ x_amplitudes[0]
-    x_amplitudes[1] = displacement_matrix(-alpha, cutoff) @ x_amplitudes[1]
+    # Current Sandia/DMANH convention: xCD(s) realizes mathematical D(-i s).
+    # Previous local mathematical convention:
+    # math_alpha = sandia_alpha
+    math_alpha = -1.0j * sandia_alpha
+    x_amplitudes[0] = displacement_matrix(math_alpha, cutoff) @ x_amplitudes[0]
+    x_amplitudes[1] = displacement_matrix(-math_alpha, cutoff) @ x_amplitudes[1]
     return (z_to_x @ x_amplitudes).reshape(2 * cutoff)
 
 def apply_zcd(state: np.ndarray, beta: complex, cutoff: int) -> np.ndarray:
