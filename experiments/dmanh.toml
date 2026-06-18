@@ -1,0 +1,29 @@
+# DMANH+ — Phil's parameters.
+
+[evolution]
+steps = 49
+B_rad_s = 5.09628e3
+delta_rad_s = 1.29817e3
+alpha0 = 0.18512012242326523  # pi / (12 * sqrt(2))
+vartheta = 0.8
+x_min = 1.25895
+alpha_phase_offset = 0
+
+[readout]
+betas = [[0, -0.4], [0, -0.2], [0, 0], [0, 0.2], [0, 0.4]]
+
+[output]
+jaqal = "build/dmanh.jaqal"
+notebook = "build/notebook"
+
+[plots]
+times_ms = [0, 4.081408, 7.691885]
+hsim_max_time_ms = 7.6918850612603702
+direct_png = "build/dmanh.png"
+direct_title = "DMANH+"
+hsim_png = "build/dmanh_hsim.png"
+hsim_title = "DMANH+ exact H_sim versus compiled-gate dynamics"
+measurement_png = "build/dmanh_measurement_panels.png"
+measurement_title = "DMANH+ McGarry Eq. 33 readout from chi(beta)"
+chi_png = "build/dmanh_chi_slice_panels.png"
+chi_title = "DMANH+ characteristic-function slice"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from __future__ import annotations
+
 import argparse
 import cmath
 import math
@@ -7,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
+from experiment import add_experiment_arg, apply_toml_defaults, load_toml
 from gates import cosine_gate_lines, fmt, zcd_line
 
 
@@ -303,8 +306,41 @@ def xcd_readout_line(
 #   --output
 #       Filesystem path for the generated Jaqal. This has no McGarry-paper
 #       counterpart.
+COMPILER_TOML_MAP = {
+    "evolution.steps": "steps",
+    "evolution.B_rad_s": "b_rad_s",
+    "evolution.delta_rad_s": "delta_rad_s",
+    "evolution.delta_hz": "delta_hz",
+    "evolution.alpha0": "alpha0",
+    "evolution.vartheta": "vartheta",
+    "evolution.x_min": "x_min",
+    "evolution.alpha_phase_offset": "alpha_phase_offset",
+    "evolution.max_time_ms": "max_time_ms",
+    "evolution.dt_us": "dt_us",
+    "output.jaqal": "output",
+    "output.notebook": "export_numpy",
+    "readout.re_beta": "readout_re_beta",
+    "readout.im_beta": "readout_im_beta",
+    "readout.imaginary_loop": "imaginary_readout_loop",
+}
+
+
+def _apply_compiler_toml(parser: argparse.ArgumentParser) -> None:
+    apply_toml_defaults(parser, COMPILER_TOML_MAP, path_dests={"output", "export_numpy"})
+    pre, _ = parser.parse_known_args()
+    if getattr(pre, "experiment", None) is None:
+        return
+    cfg = load_toml(pre.experiment)
+    if "readout" in cfg and "betas" in cfg["readout"]:
+        flat = []
+        for pair in cfg["readout"]["betas"]:
+            flat.extend(pair)
+        parser.set_defaults(readout_betas=flat)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    add_experiment_arg(parser)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
         "--max-time-ms",
@@ -396,6 +432,7 @@ def parse_args() -> argparse.Namespace:
             "notebook beta sweep. Requires --export-numpy."
         ),
     )
+    _apply_compiler_toml(parser)
     return resolve_evolution_args(parser.parse_args())
 
 

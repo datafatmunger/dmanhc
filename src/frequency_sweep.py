@@ -8,6 +8,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from experiment import add_experiment_arg, apply_toml_defaults
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "cvdv-matplotlib-cache"))
 
@@ -555,6 +557,21 @@ def plot_traces(
     plt.close(figure)
 
 
+FREQ_TOML_MAP = {
+    "output.jaqal": "jaqal",
+    "frequency_sweep.csv": "output_csv",
+    "frequency_sweep.shift_png": "shift_output",
+    "frequency_sweep.spectra_png": "spectra_output",
+    "frequency_sweep.trace_png": "trace_output",
+    "frequency_sweep.title": "title",
+    "frequency_sweep.max_time_ms": "max_time_ms",
+    "frequency_sweep.vartheta_min": "vartheta_min",
+    "frequency_sweep.vartheta_max": "vartheta_max",
+    "frequency_sweep.vartheta_step": "vartheta_step",
+    "frequency_sweep.selected_vartheta": "selected_vartheta",
+}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -562,6 +579,7 @@ def parse_args() -> argparse.Namespace:
             "FFT peak shifts relative to exact H_sim propagation."
         )
     )
+    add_experiment_arg(parser)
     parser.add_argument("--jaqal", type=Path, default=DEFAULT_JAQAL)
     parser.add_argument("--output-csv", type=Path, default=DEFAULT_CSV_OUTPUT)
     parser.add_argument("--shift-output", type=Path, default=DEFAULT_SHIFT_OUTPUT)
@@ -598,6 +616,10 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=None,
         help="Optional right edge for the trace-example plot.",
+    )
+    apply_toml_defaults(
+        parser, FREQ_TOML_MAP,
+        path_dests={"jaqal", "output_csv", "shift_output", "spectra_output", "trace_output"},
     )
     return parser.parse_args()
 

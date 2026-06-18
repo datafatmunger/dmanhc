@@ -1,0 +1,25 @@
+# DMANH+ frequency sweep — FFT peak shift versus vartheta.
+
+[evolution]
+steps = 49
+B_rad_s = 5.09628e3
+delta_rad_s = 1.29817e3
+alpha0 = 0.18512012242326523  # pi / (12 * sqrt(2))
+vartheta = 0.8
+x_min = 1.25895
+alpha_phase_offset = 0
+
+[output]
+jaqal = "build/dmanh.jaqal"
+
+[frequency_sweep]
+csv = "build/dmanh_frequency_sweep.csv"
+shift_png = "build/dmanh_frequency_shift_vs_vartheta.png"
+spectra_png = "build/dmanh_frequency_spectra.png"
+trace_png = "build/dmanh_frequency_trace_examples.png"
+title = "DMANH+ FFT peak shift versus compiled-gate timestep"
+max_time_ms = 160
+vartheta_min = 0.1
+vartheta_max = 3.0
+vartheta_step = 0.1
+selected_vartheta = [0.1, 0.8, 1.6, 3.0]

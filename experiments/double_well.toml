@@ -1,0 +1,26 @@
+# Symmetric double well — McGarry's baseline parameters.
+
+[evolution]
+steps = 20
+B_rad_s = 4.0e3
+delta_rad_s = 3.141592653589793e3
+alpha0 = 0.5235987755982989  # pi/6
+vartheta = 0.8
+x_min = 1.5
+alpha_phase_offset = 0
+
+[output]
+jaqal = "build/double_well.jaqal"
+
+[plots]
+times_ms = [0, 2.0, 4.0]
+direct_png = "build/double_well_oracle.png"
+direct_title = "Symmetric double well"
+hsim_png = "build/double_well_hsim.png"
+hsim_title = "Exact H_sim versus compiled-gate dynamics"
+measurement_png = "build/double_well_measurement_panels.png"
+measurement_title = "McGarry Eq. 33 readout from chi(beta)"
+chi_png = "build/double_well_chi_slice_panels.png"
+chi_title = "McGarry Fig. 7-style characteristic-function slice"
+comparison_png = "build/double_well_measurement_comparison.png"
+comparison_title = "Direct state access versus McGarry characteristic-function readout"

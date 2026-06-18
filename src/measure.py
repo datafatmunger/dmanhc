@@ -9,6 +9,8 @@ from pathlib import Path
 
 import numpy as np
 
+from experiment import add_experiment_arg, apply_toml_defaults
+
 from plots import (
     DEFAULT_CHI_TITLE,
     DEFAULT_COMPARISON_TITLE,
@@ -332,6 +334,18 @@ def reconstruct_snapshots(
     }
 
 
+MEASURE_TOML_MAP = {
+    "output.jaqal": "jaqal",
+    "plots.measurement_png": "output",
+    "plots.measurement_title": "title",
+    "plots.chi_png": "chi_output",
+    "plots.chi_title": "chi_title",
+    "plots.comparison_png": "comparison_output",
+    "plots.comparison_title": "comparison_title",
+    "plots.times_ms": "times_ms",
+}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -339,6 +353,7 @@ def parse_args() -> argparse.Namespace:
             "characteristic function, using the ideal xCD truncated-Fock simulator."
         )
     )
+    add_experiment_arg(parser)
     parser.add_argument("--jaqal", type=Path, default=DEFAULT_JAQAL)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--title", default=DEFAULT_MEASUREMENT_TITLE)
@@ -425,6 +440,10 @@ def parse_args() -> argparse.Namespace:
         "--interaction-frame",
         action="store_true",
         help="Use raw interaction-frame gate state instead of applying the inferred harmonic frame.",
+    )
+    apply_toml_defaults(
+        parser, MEASURE_TOML_MAP,
+        path_dests={"jaqal", "output", "chi_output", "comparison_output"},
     )
     return parser.parse_args()
 

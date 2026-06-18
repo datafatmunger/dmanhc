@@ -5,6 +5,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from experiment import add_experiment_arg, apply_toml_defaults
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "cvdv-matplotlib-cache"))
 
@@ -246,10 +248,22 @@ def plot_hsim_vs_compiled_gate_x_trace(
     plt.close(figure)
 
 
+PLOTS_TOML_MAP = {
+    "output.jaqal": "jaqal",
+    "plots.direct_png": "output",
+    "plots.hsim_png": "hsim_output",
+    "plots.direct_title": "title",
+    "plots.hsim_title": "hsim_title",
+    "plots.times_ms": "times_ms",
+    "plots.hsim_max_time_ms": "hsim_max_time_ms",
+}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Plot the direct ideal-simulator state density for the McGarry double well."
     )
+    add_experiment_arg(parser)
     parser.add_argument("--jaqal", type=Path, default=DEFAULT_JAQAL)
     parser.add_argument("--output", type=Path, default=DEFAULT_DIRECT_OUTPUT)
     parser.add_argument("--hsim-output", type=Path, default=DEFAULT_HSIM_TRACE_OUTPUT)
@@ -283,6 +297,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="plot raw interaction-frame gate state instead of applying the inferred harmonic frame",
     )
+    apply_toml_defaults(parser, PLOTS_TOML_MAP, path_dests={"jaqal", "output", "hsim_output"})
     return parser.parse_args()
 
 
