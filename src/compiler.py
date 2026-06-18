@@ -5,6 +5,8 @@ import cmath
 import math
 from pathlib import Path
 
+import numpy as np
+
 from gates import cosine_gate_lines, fmt, zcd_line
 
 
@@ -136,6 +138,31 @@ def build_evolution_lines(args: argparse.Namespace) -> list[str]:
         )
 
     return lines
+
+
+def build_angles(args: argparse.Namespace) -> np.ndarray:
+    """Return a (3, steps) array of gate parameters per evolution step.
+
+    Row 0: -alpha.real  (first xCD real argument)
+    Row 1: -alpha.imag  (first xCD imaginary argument)
+    Row 2: -vartheta    (Rz angle)
+    """
+    max_time_s = args.max_time_ms / 1000.0
+    dt_s = args.dt_us * 1e-6
+    if getattr(args, "steps", None) is None:
+        steps = round(max_time_s / dt_s)
+    else:
+        steps = args.steps
+
+    delta = getattr(args, "delta_rad_s", 2.0 * math.pi * args.delta_hz)
+    angles = np.empty((3, steps))
+    for step in range(steps):
+        zeta = args.alpha_phase_offset + delta * step * dt_s
+        alpha = args.alpha0 * cmath.exp(1j * zeta)
+        angles[0, step] = -alpha.real
+        angles[1, step] = -alpha.imag
+        angles[2, step] = -args.vartheta
+    return angles
 
 
 def build_program(args: argparse.Namespace) -> str:
@@ -351,7 +378,45 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Default imMeas loop value: 1 emits R q[probe] 0 pi/2 before xCD readout.",
     )
+    parser.add_argument(
+        "--export-numpy",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="Export angles.npy and betas.npy to DIR for notebook consumption.",
+    )
+    parser.add_argument(
+        "--readout-betas",
+        type=float,
+        nargs="+",
+        default=None,
+        metavar="RE IM",
+        help=(
+            "McGarry beta values as re1 im1 re2 im2 ... pairs for the "
+            "notebook beta sweep. Requires --export-numpy."
+        ),
+    )
     return resolve_evolution_args(parser.parse_args())
+
+
+def export_numpy(args: argparse.Namespace) -> None:
+    out_dir = args.export_numpy
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    angles = build_angles(args)
+    np.save(out_dir / "angles.npy", angles)
+
+    if args.readout_betas is not None:
+        flat = args.readout_betas
+        if len(flat) % 2 != 0:
+            raise ValueError("--readout-betas requires an even number of floats (re im pairs)")
+        betas = np.array(flat, dtype=float).reshape(-1, 2)
+    else:
+        betas = np.array([[args.readout_re_beta, args.readout_im_beta]])
+    np.save(out_dir / "betas.npy", betas)
+
+    print(out_dir / "angles.npy")
+    print(out_dir / "betas.npy")
 
 
 def main() -> None:
@@ -360,6 +425,9 @@ def main() -> None:
     text = build_program(args)
     args.output.write_text(text)
     print(args.output)
+
+    if args.export_numpy is not None:
+        export_numpy(args)
 
 
 if __name__ == "__main__":

@@ -232,7 +232,7 @@ def plot_hsim_vs_compiled_gate_x_trace(
         marker=".",
         markersize=3.0,
         alpha=0.9,
-        label="ideal compiled xCD/Rz sequence",
+        label="compiled xCD/Rz sequence",
     )
     axis.axhline(0.0, color="black", linewidth=0.8, alpha=0.3)
     axis.set_xlabel("time (ms)")

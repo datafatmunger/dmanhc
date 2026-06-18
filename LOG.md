@@ -40,17 +40,6 @@
   - Added `MEASUREMENT_DERIVATION.md` with the hand calculation for `Re[chi]`,
     `Im[chi]`, and the `s=i beta/2` compiler mapping.
 
-- Added a Phil-style measurement audit to `MEASUREMENT_DERIVATION.md`.
-  - For the current generated DMANH+ program, the note records
-    `chi(i0.4)`, no-rotation probe expectation, `Rx(pi/2)` probe expectation,
-    direct `<x>`, and 2PFD `<x>` at `0`, `4.081408`, and `7.691885` ms.
-  - The check verifies that `probe_z_no_rotation = Re[chi(i0.4)]` and
-    `probe_z_rx_pi_2 = Im[chi(i0.4)]` to numerical roundoff in `src/measure.py`.
-  - Noted a remaining hardware-analysis sign convention to confirm: the QSCOUT
-    notebook computes `state0 - state1`, while its comments identify `state1`
-    as probe spin-up in one helper. That may be `P_down - P_up`, i.e. the
-    negative of the simulator's `sigma_z = P_up - P_down`.
-
 - Regenerated `build/dmanh.jaqal`.
   - Preparation now emits `zCD ... 0.89021208217480396 0`.
   - Evolution uses `alpha phase offset = 0`.
@@ -60,6 +49,17 @@
   - `src/plots.py` now emits both `build/dmanh.png` and `build/dmanh_hsim.png` for the DMANH+ target.
   - The DMANH+ `H_sim` trace uses `--hsim-max-time-ms 7.6918850612603702`, the exact `49 Delta t` endpoint required by the timestep-grid check.
   - `src/measure.py` now emits `build/dmanh_measurement_panels.png` and `build/dmanh_chi_slice_panels.png` for the same DMANH+ times.
+
+- Replaced the attempted `dmanh-4ms`/`dmanh-compact` Phil-facing variants with `make dmanh-vartheta-1p6`.
+  - This keeps the fitted DMANH+ well and dynamics fixed: `B=5.09628e3 rad/s`, `delta=1.29817e3 rad/s`, `alpha0=0.18512`, and `x_min=1.25895`.
+  - It increases only `vartheta` from `0.8` to `1.6`, so `Delta t = vartheta / B = 313.954492 us`.
+  - Because the original `49`-step endpoint at `7.691885 ms` is halfway between coarse steps, the target uses `25` steps and ends at `7.848862 ms`; the midpoint `4.081408 ms` is exactly `13` coarse steps.
+  - It writes `build/dmanh_vartheta_1p6.jaqal`, `build/dmanh_vartheta_1p6.png`, `build/dmanh_vartheta_1p6_hsim.png`, `build/dmanh_vartheta_1p6_measurement_panels.png`, and `build/dmanh_vartheta_1p6_chi_slice_panels.png`.
+
+- Added Phil's FFT frequency-error sweep as `make dmanh-frequency-sweep`.
+  - `src/frequency_sweep.py` compares exact `H_sim` propagation with compiled xCD/Rz propagation while sweeping `vartheta=0.1..3.0`.
+  - The sweep keeps `B`, `delta`, `alpha0`, and `x_min` fixed and changes only `Delta t = vartheta / B`.
+  - It writes `build/dmanh_frequency_sweep.csv`, `build/dmanh_frequency_shift_vs_vartheta.png`, `build/dmanh_frequency_spectra.png`, and `build/dmanh_frequency_trace_examples.png`.
 
 Open questions:
 
