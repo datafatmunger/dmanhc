@@ -54,6 +54,32 @@ build/dmanh_frequency_spectra.png
 build/dmanh_frequency_trace_examples.png
 ```
 
+Generate the non-Abelian phase-space flux checks:
+
+```sh
+make non-abelian-flux
+```
+
+This writes:
+
+```text
+build/non_abelian_flux_commutator.jaqal
+build/non_abelian_flux_qblock_commutator.jaqal
+build/non_abelian_flux_results.json
+build/non_abelian_flux_summary.csv
+build/non_abelian_flux_qblock_path.csv
+```
+
+The generated outputs include both the clean SQR-only holonomy control and the
+second-stage McGarry Q-block phase-space sequence. The Q-block sequence uses
+closed excursions
+`Q(gamma,vartheta,phi)=D(-sigma_x gamma)R_phi(-vartheta)D(sigma_x gamma)`
+with `gamma` winding around the selected synthetic puncture in
+displacement-control phase space. The default Q-block mode calibrates each
+drive angle against the ground-state projected single-block dressing, so the
+path CSV records both `target_vartheta` and the calibrated physical
+`vartheta`. The default parameters are `alpha = beta = pi/4`.
+
 Generate the symmetric double-well benchmark and diagnostics:
 
 ```sh

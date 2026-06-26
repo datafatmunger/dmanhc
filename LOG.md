@@ -61,6 +61,30 @@
   - The sweep keeps `B`, `delta`, `alpha0`, and `x_min` fixed and changes only `Delta t = vartheta / B`.
   - It writes `build/dmanh_frequency_sweep.csv`, `build/dmanh_frequency_shift_vs_vartheta.png`, `build/dmanh_frequency_spectra.png`, and `build/dmanh_frequency_trace_examples.png`.
 
+## 2026-06-19
+
+- Agent/model: Codex, GPT-5.
+
+- Added a read-only Sandia-notebook comparison tool as `src/notebook_readout_compare.py`.
+  - The script parses `notebooks/output.ipynb` for the hard-coded angle list, `im_beta_list`, `reBeta`, and the printed `expZ_imMeas` matrix without modifying the notebooks.
+  - It simulates the same prefix circuits with the existing `src/measure.py` and `src/simulator.py` conventions.
+  - It also generates a separate prepped left-well Eq. `xapprox` comparison using `x_min=1.25895`.
+
+- Added `make dmanh-readout-compare`.
+  - This writes `build/notebook_readout_compare_output_vs_theory.png`, `build/notebook_readout_compare_eq35.png`, `build/notebook_readout_compare.csv`, and `build/notebook_readout_compare_eq35_prefix.jaqal`.
+  - Verified with `.venv/bin/python3 -m py_compile src/notebook_readout_compare.py` and `make dmanh-readout-compare`.
+
+- Convention finding from the Sandia output notebook:
+  - The notebook sweeps the Jaqal variable `imBeta` while keeping `reBeta=-0.2`.
+  - Under the current local convention, these are Sandia `xCD` arguments `s`, with McGarry `beta=-2 i s`.
+  - Therefore the notebook's sweep maps to `beta = 2*imBeta + 0.4 i`: it varies `Re[beta]` at fixed `Im[beta]=0.4`.
+  - A Fig. 3(f) / Eq. `xapprox` scan along `beta=i y` should instead keep `imBeta=0` and sweep `reBeta=-y/2`; the 2PFD point with `h=0.4` is `reBeta=-0.2`, `imBeta=0`.
+
+- Current comparison result:
+  - For the notebook's no-prep prefix circuit, ideal `measure.py` theory gives `<x>=0` and `Im[chi(i y)]=0` up to numerical roundoff.
+  - The printed Sandia output matrix has the center `imBeta=0` trace near `1` for all three subcircuits, so it is not reproduced by the ideal no-prep symmetric circuit.
+  - With a left-well `zCD` preparation, the generated Eq. `xapprox` comparator gives direct `<x>` around `-1.257`, `-1.201`, and `-1.096` after one, two, and three prefix blocks; the `h=0.4` 2PFD estimates are about `-1.064`, `-1.028`, and `-0.959`.
+
 Open questions:
 
 - Whether to generate separate hardware programs for `0`, `26`, and `49` evolution steps before readout.
