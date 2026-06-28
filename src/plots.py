@@ -149,7 +149,7 @@ def plot_measurement_comparison(
         axes[0, column].set_xlabel("")
 
     axes[0, 0].set_ylabel("Direct postselected density")
-    axes[1, 0].set_ylabel("Eq. 33 from chi(beta)")
+    axes[1, 0].set_ylabel("Eq. 33 from simulated readout")
     figure.suptitle(title, fontsize=13)
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output, dpi=180)
@@ -217,6 +217,13 @@ def plot_hsim_vs_compiled_gate_x_trace(
         max_time_ms,
         cutoff,
     )
+    xsdf_gate_times_ms, xsdf_gate_x_expectation = compiled_gate_x_trace(
+        prep,
+        model,
+        max_time_ms,
+        cutoff,
+        displacement_gate="xSDF",
+    )
 
     figure, axis = plt.subplots(figsize=(7.0, 4.0), constrained_layout=True)
     axis.plot(
@@ -235,6 +242,17 @@ def plot_hsim_vs_compiled_gate_x_trace(
         markersize=3.0,
         alpha=0.9,
         label="compiled xCD/Rz sequence",
+    )
+    axis.plot(
+        xsdf_gate_times_ms,
+        xsdf_gate_x_expectation,
+        color="#3f7f4a",
+        linewidth=1.2,
+        linestyle="--",
+        marker="x",
+        markersize=3.0,
+        alpha=0.85,
+        label="xSDF/Rz semantic sequence",
     )
     axis.axhline(0.0, color="black", linewidth=0.8, alpha=0.3)
     axis.set_xlabel("time (ms)")

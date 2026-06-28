@@ -35,10 +35,8 @@ from simulator import (
 
 DEFAULT_JAQAL = REPO_ROOT / "build" / "dmanh.jaqal"
 DEFAULT_CSV_OUTPUT = REPO_ROOT / "build" / "dmanh_frequency_sweep.csv"
-DEFAULT_SHIFT_OUTPUT = REPO_ROOT / "build" / "dmanh_frequency_shift_vs_vartheta.png"
 DEFAULT_SPECTRA_OUTPUT = REPO_ROOT / "build" / "dmanh_frequency_spectra.png"
 DEFAULT_TRACE_OUTPUT = REPO_ROOT / "build" / "dmanh_frequency_trace_examples.png"
-DEFAULT_TITLE = "DMANH+ FFT peak shift versus compiled-gate timestep"
 
 Z_TO_X = np.array([[1.0, 1.0], [1.0, -1.0]], dtype=np.complex128) / math.sqrt(2.0)
 
@@ -385,53 +383,6 @@ def write_csv(rows: list[SweepRow], output: Path) -> None:
             writer.writerow({field: getattr(row, field) for field in fieldnames})
 
 
-def plot_shift(rows: list[SweepRow], output: Path, title: str) -> None:
-    vartheta = np.array([row.vartheta for row in rows], dtype=np.float64)
-    shift_hz = np.array([row.frequency_shift_hz for row in rows], dtype=np.float64)
-    gate_counts = np.array([row.total_evolution_gates for row in rows], dtype=np.float64)
-    rms_error = np.array([row.rms_x_error for row in rows], dtype=np.float64)
-
-    figure, axes = plt.subplots(2, 1, figsize=(7.2, 6.2), sharex=True, constrained_layout=True)
-    axes[0].plot(vartheta, shift_hz, color="#2f5aa6", marker="o", markersize=3.2, linewidth=1.8)
-    axes[0].axhline(0.0, color="black", linewidth=0.8, alpha=0.3)
-    axes[0].set_ylabel("compiled - exact peak (Hz)")
-    axes[0].set_title(title)
-    axes[0].grid(alpha=0.15)
-
-    axes[1].plot(
-        vartheta,
-        gate_counts,
-        color="#d97b2d",
-        marker="o",
-        markersize=3.2,
-        linewidth=1.8,
-        label="evolution gates",
-    )
-    axes[1].set_xlabel(r"$\vartheta$")
-    axes[1].set_ylabel("compiled evolution gates")
-    axes[1].grid(alpha=0.15)
-
-    error_axis = axes[1].twinx()
-    error_axis.plot(
-        vartheta,
-        rms_error,
-        color="#4c8b4a",
-        marker="s",
-        markersize=3.0,
-        linewidth=1.4,
-        label=r"RMS $\langle x \rangle$ error",
-    )
-    error_axis.set_ylabel(r"RMS $\langle x \rangle$ error")
-
-    lines, labels = axes[1].get_legend_handles_labels()
-    error_lines, error_labels = error_axis.get_legend_handles_labels()
-    axes[1].legend(lines + error_lines, labels + error_labels, frameon=False, loc="best")
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output, dpi=180)
-    plt.close(figure)
-
-
 def normalized_amplitudes(spectrum: Spectrum) -> np.ndarray:
     maximum = float(np.max(spectrum.amplitudes))
     if maximum <= 0.0:
@@ -559,10 +510,8 @@ def plot_traces(
 FREQ_TOML_MAP = {
     "output.jaqal": "jaqal",
     "frequency_sweep.csv": "output_csv",
-    "frequency_sweep.shift_png": "shift_output",
     "frequency_sweep.spectra_png": "spectra_output",
     "frequency_sweep.trace_png": "trace_output",
-    "frequency_sweep.title": "title",
     "frequency_sweep.max_time_ms": "max_time_ms",
     "frequency_sweep.vartheta_min": "vartheta_min",
     "frequency_sweep.vartheta_max": "vartheta_max",
@@ -581,10 +530,8 @@ def parse_args() -> argparse.Namespace:
     add_experiment_arg(parser)
     parser.add_argument("--jaqal", type=Path, default=DEFAULT_JAQAL)
     parser.add_argument("--output-csv", type=Path, default=DEFAULT_CSV_OUTPUT)
-    parser.add_argument("--shift-output", type=Path, default=DEFAULT_SHIFT_OUTPUT)
     parser.add_argument("--spectra-output", type=Path, default=DEFAULT_SPECTRA_OUTPUT)
     parser.add_argument("--trace-output", type=Path, default=DEFAULT_TRACE_OUTPUT)
-    parser.add_argument("--title", default=DEFAULT_TITLE)
     parser.add_argument("--cutoff", type=int, default=FOCK_CUTOFF)
     parser.add_argument(
         "--dt-us",
@@ -618,7 +565,7 @@ def parse_args() -> argparse.Namespace:
     )
     apply_toml_defaults(
         parser, FREQ_TOML_MAP,
-        path_dests={"jaqal", "output_csv", "shift_output", "spectra_output", "trace_output"},
+        path_dests={"jaqal", "output_csv", "spectra_output", "trace_output"},
     )
     return parser.parse_args()
 
@@ -627,12 +574,10 @@ def main() -> None:
     args = parse_args()
     rows, examples = run_sweep(args)
     write_csv(rows, args.output_csv)
-    plot_shift(rows, args.shift_output, args.title)
     plot_spectra(examples, args.spectra_output, args.spectra_max_frequency_hz)
     plot_traces(examples, args.trace_output, args.trace_max_time_ms)
 
     print(args.output_csv)
-    print(args.shift_output)
     print(args.spectra_output)
     print(args.trace_output)
     if rows:

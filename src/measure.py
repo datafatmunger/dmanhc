@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 """McGarry-style ideal measurement readout for the Sandia xCD program.
+
+The experiment-facing chi and density plots simulate the readout gates parsed
+from the generated Jaqal.  Direct characteristic-function evaluation is kept as
+an audit/reference calculation, not as the source of the plotted readout data.
 """
 
 import argparse
@@ -28,11 +32,14 @@ from simulator import (
     X_MIN,
     X_SAMPLES,
     annihilation_matrix,
+    canonical_gate_name,
     displacement_matrix,
+    gate_name,
     ho_basis_functions,
     jaqal_timestep_us,
-    load_program_model_and_snapshots,
+    load_program_model_snapshots_and_readout,
     r_matrix,
+    rotation_axis_angle,
 )
 
 
@@ -91,18 +98,21 @@ def probe_initial_vector(state: str) -> np.ndarray:
     raise ValueError(f"unsupported probe initial state {state!r}")
 
 
-def conditional_displacement_unitary(beta: complex, cutoff: int) -> np.ndarray:
-    # McGarry methods:meas reads chi(beta)=<D(beta)> by applying
-    # D(sigma_x beta/2). The emitted xCD argument is beta/2 directly.
-    math_beta = 0.5 * beta
+def conditional_xcd_unitary(pulse_beta: complex, cutoff: int) -> np.ndarray:
     plus = np.array([1.0, 1.0], dtype=np.complex128) / math.sqrt(2.0)
     minus = np.array([1.0, -1.0], dtype=np.complex128) / math.sqrt(2.0)
     plus_projector = np.outer(plus, plus.conj())
     minus_projector = np.outer(minus, minus.conj())
-    return np.kron(plus_projector, displacement_matrix(math_beta, cutoff)) + np.kron(
+    return np.kron(plus_projector, displacement_matrix(pulse_beta, cutoff)) + np.kron(
         minus_projector,
-        displacement_matrix(-math_beta, cutoff),
+        displacement_matrix(-pulse_beta, cutoff),
     )
+
+
+def conditional_displacement_unitary(beta: complex, cutoff: int) -> np.ndarray:
+    # McGarry methods:meas reads chi(beta)=<D(beta)> by applying
+    # D(sigma_x beta/2). The emitted xCD argument is beta/2 directly.
+    return conditional_xcd_unitary(0.5 * beta, cutoff)
 
 
 def probe_z_expectation(
@@ -132,41 +142,113 @@ def probe_z_expectation(
     return float(np.trace(measured_rho @ observable).real)
 
 
+def readout_sign_for_probe_state(probe_initial_state: str) -> float:
+    if probe_initial_state == "up":
+        return 1.0
+    if probe_initial_state == "down":
+        return -1.0
+    raise ValueError(f"unsupported probe initial state {probe_initial_state!r}")
+
+
+def readout_z_expectation_from_gates(
+    rho: np.ndarray,
+    cutoff: int,
+    readout_gates: list[object],
+    pulse_beta: complex,
+    probe_initial_state: str,
+    use_rotations: bool,
+) -> float:
+    probe_vector = probe_initial_vector(probe_initial_state)
+    joint_rho = np.kron(np.outer(probe_vector, probe_vector.conj()), rho)
+    oscillator_identity = np.eye(cutoff, dtype=np.complex128)
+
+    for gate in readout_gates:
+        name = canonical_gate_name(gate)
+        if name == "R":
+            if not use_rotations:
+                continue
+            phase, angle = rotation_axis_angle(gate)
+            unitary = np.kron(r_matrix(phase, angle), oscillator_identity)
+        elif name == "xCD":
+            unitary = conditional_xcd_unitary(pulse_beta, cutoff)
+        else:
+            raise ValueError(f"unsupported gate in readout block: {gate_name(gate)}")
+        joint_rho = unitary @ joint_rho @ unitary.conj().T
+
+    sigma_z = np.array([[1.0, 0.0], [0.0, -1.0]], dtype=np.complex128)
+    observable = np.kron(sigma_z, oscillator_identity)
+    return float(np.trace(joint_rho @ observable).real)
+
+
+def readout_pulse_beta_for_chi_beta(beta: complex) -> complex:
+    return 0.5 * beta
+
+
+def readout_chi_from_gates(
+    rho: np.ndarray,
+    cutoff: int,
+    readout_gates: list[object],
+    beta: complex,
+    probe_initial_state: str,
+) -> complex:
+    pulse_beta = readout_pulse_beta_for_chi_beta(beta)
+    sign = readout_sign_for_probe_state(probe_initial_state)
+    re_z = readout_z_expectation_from_gates(
+        rho,
+        cutoff,
+        readout_gates,
+        pulse_beta,
+        probe_initial_state,
+        use_rotations=False,
+    )
+    im_z = readout_z_expectation_from_gates(
+        rho,
+        cutoff,
+        readout_gates,
+        pulse_beta,
+        probe_initial_state,
+        use_rotations=True,
+    )
+    return sign * complex(re_z, im_z)
+
+
 def probe_readout_check(
     rho: np.ndarray,
     cutoff: int,
     beta: complex,
     probe_initial_state: str,
+    readout_gates: list[object],
 ) -> dict[str, float | complex]:
-    # This explicitly emulates the ideal version of the generated readout block
-    #   optional R(0, pi/2); mapped xCD beta/2; measure Z
-    # and compares it to the direct McGarry characteristic function. The two
-    # sign-error columns keep the X-rotation/qubit-basis convention visible.
+    # This executes the parsed ideal readout block and compares it to the direct
+    # McGarry characteristic function as an audit of the readout convention.
     chi = characteristic_function(beta, rho, cutoff)
-    z_no_rotation = probe_z_expectation(
+    pulse_beta = readout_pulse_beta_for_chi_beta(beta)
+    z_no_rotation = readout_z_expectation_from_gates(
         rho,
         cutoff,
-        beta,
-        use_x_rotation=False,
-        rotation_angle=0.0,
+        readout_gates,
+        pulse_beta,
         probe_initial_state=probe_initial_state,
+        use_rotations=False,
     )
-    z_rx_pi_2 = probe_z_expectation(
+    z_rx_pi_2 = readout_z_expectation_from_gates(
         rho,
         cutoff,
-        beta,
-        use_x_rotation=True,
-        rotation_angle=math.pi / 2.0,
+        readout_gates,
+        pulse_beta,
         probe_initial_state=probe_initial_state,
+        use_rotations=True,
     )
+    sign = readout_sign_for_probe_state(probe_initial_state)
     return {
         "probe_beta": beta,
+        "probe_pulse_beta": pulse_beta,
         "probe_chi": chi,
         "probe_z_no_rotation": z_no_rotation,
         "probe_z_rx_pi_2": z_rx_pi_2,
-        "probe_re_abs_error": abs(z_no_rotation - chi.real),
-        "probe_rx_pi_2_minus_im_abs_error": abs(z_rx_pi_2 - chi.imag),
-        "probe_rx_pi_2_plus_im_abs_error": abs(z_rx_pi_2 + chi.imag),
+        "probe_re_abs_error": abs(sign * z_no_rotation - chi.real),
+        "probe_rx_pi_2_minus_im_abs_error": abs(sign * z_rx_pi_2 - chi.imag),
+        "probe_rx_pi_2_plus_im_abs_error": abs(sign * z_rx_pi_2 + chi.imag),
     }
 
 
@@ -191,6 +273,25 @@ def position_expectation_2pfd(
     return float(chi_ih.imag / (math.sqrt(2.0) * h)), chi_ih
 
 
+def position_expectation_2pfd_from_readout(
+    rho: np.ndarray,
+    cutoff: int,
+    readout_gates: list[object],
+    h: float,
+    probe_initial_state: str,
+) -> tuple[float, complex]:
+    if h <= 0.0:
+        raise ValueError("--pfd-h must be positive")
+    chi_ih = readout_chi_from_gates(
+        rho,
+        cutoff,
+        readout_gates,
+        1.0j * h,
+        probe_initial_state,
+    )
+    return float(chi_ih.imag / (math.sqrt(2.0) * h)), chi_ih
+
+
 def positive_imaginary_beta_grid(beta_imag_max: float, positive_points: int) -> np.ndarray:
     if beta_imag_max <= 0.0:
         raise ValueError("--beta-imag-max must be positive")
@@ -202,21 +303,26 @@ def positive_imaginary_beta_grid(beta_imag_max: float, positive_points: int) -> 
 def characteristic_slice_imaginary_beta(
     rho: np.ndarray,
     cutoff: int,
+    readout_gates: list[object],
     beta_imag_max: float,
     positive_points: int,
+    probe_initial_state: str,
 ) -> tuple[np.ndarray, np.ndarray]:
     positive_beta_imag = positive_imaginary_beta_grid(beta_imag_max, positive_points)
-    positive_chi = np.array(
-        [characteristic_function(1.0j * beta_imag, rho, cutoff) for beta_imag in positive_beta_imag],
+    beta_imag = np.concatenate((-positive_beta_imag[:0:-1], positive_beta_imag))
+    chi = np.array(
+        [
+            readout_chi_from_gates(
+                rho,
+                cutoff,
+                readout_gates,
+                1.0j * beta_value,
+                probe_initial_state,
+            )
+            for beta_value in beta_imag
+        ],
         dtype=np.complex128,
     )
-
-    # Half-plane scans are filled by Hermitian symmetry.
-    # For a displacement characteristic function, D(beta)^dagger = D(-beta),
-    # so a Hermitian rho gives chi(-beta)=chi(beta)^*. This is the relation
-    # used here to fill the unmeasured negative imaginary beta axis.
-    beta_imag = np.concatenate((-positive_beta_imag[:0:-1], positive_beta_imag))
-    chi = np.concatenate((positive_chi[:0:-1].conj(), positive_chi))
     return beta_imag, chi
 
 
@@ -253,6 +359,7 @@ def reconstruct_snapshot_density(
     cutoff: int,
     basis: np.ndarray,
     xs: np.ndarray,
+    readout_gates: list[object],
     readout_state: str,
     beta_imag_max: float,
     positive_beta_points: int,
@@ -263,18 +370,28 @@ def reconstruct_snapshot_density(
     rho, postselection_probability = motional_density_matrix(state, cutoff, readout_state)
     direct_density = position_density_from_rho(rho, basis)
     x_direct = position_expectation_from_rho(rho, cutoff)
-    x_2pfd, chi_ih = position_expectation_2pfd(rho, cutoff, pfd_h)
+    x_2pfd, chi_ih = position_expectation_2pfd_from_readout(
+        rho,
+        cutoff,
+        readout_gates,
+        pfd_h,
+        probe_initial_state,
+    )
+    direct_chi_ih = characteristic_function(1.0j * pfd_h, rho, cutoff)
     readout_check = probe_readout_check(
         rho,
         cutoff,
         1.0j * pfd_h,
         probe_initial_state,
+        readout_gates,
     )
     beta_imag, chi = characteristic_slice_imaginary_beta(
         rho,
         cutoff,
+        readout_gates,
         beta_imag_max,
         positive_beta_points,
+        probe_initial_state,
     )
     measured_density = position_density_from_characteristic_slice(xs, beta_imag, chi)
 
@@ -294,6 +411,8 @@ def reconstruct_snapshot_density(
         "x_2pfd": x_2pfd,
         "x_2pfd_abs_error": abs(x_2pfd - x_direct),
         "chi_ih": chi_ih,
+        "direct_chi_ih": direct_chi_ih,
+        "chi_ih_readout_minus_direct_abs_error": abs(chi_ih - direct_chi_ih),
         **readout_check,
         "chi0_error": float(chi0_error),
         "max_abs_error": float(np.max(np.abs(measured_density - direct_density))),
@@ -305,6 +424,7 @@ def reconstruct_snapshots(
     snapshots: dict[float, np.ndarray],
     cutoff: int,
     times_ms: list[float],
+    readout_gates: list[object],
     readout_state: str,
     beta_imag_max: float,
     positive_beta_points: int,
@@ -320,6 +440,7 @@ def reconstruct_snapshots(
             cutoff,
             basis,
             xs,
+            readout_gates,
             readout_state,
             beta_imag_max,
             positive_beta_points,
@@ -449,7 +570,7 @@ def main() -> None:
     args = parse_args()
     dt_us = jaqal_timestep_us(args.jaqal, args.dt_us)
 
-    model, snapshots = load_program_model_and_snapshots(
+    model, snapshots, readout_gates = load_program_model_snapshots_and_readout(
         args.jaqal,
         args.times_ms,
         args.cutoff,
@@ -460,6 +581,7 @@ def main() -> None:
         snapshots,
         args.cutoff,
         args.times_ms,
+        readout_gates,
         args.readout_state,
         args.beta_imag_max,
         args.positive_beta_points,
@@ -503,6 +625,7 @@ def main() -> None:
     print(
         "readout_state,time_ms,postselection_probability,chi0_error,"
         "max_abs_error,relative_l2_error,x_direct,x_2pfd,x_2pfd_abs_error,chi_ih_imag,"
+        "chi_ih_readout_minus_direct_abs_error,"
         "probe_z_no_rotation,probe_re_abs_error,probe_z_rx_pi_2,"
         "probe_rx_pi_2_minus_im_abs_error,probe_rx_pi_2_plus_im_abs_error"
     )
@@ -520,6 +643,7 @@ def main() -> None:
             f"{result['x_2pfd']:.12g},"
             f"{result['x_2pfd_abs_error']:.12g},"
             f"{chi_ih.imag:.12g},"
+            f"{result['chi_ih_readout_minus_direct_abs_error']:.12g},"
             f"{result['probe_z_no_rotation']:.12g},"
             f"{result['probe_re_abs_error']:.12g},"
             f"{result['probe_z_rx_pi_2']:.12g},"

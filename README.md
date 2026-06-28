@@ -16,6 +16,8 @@ src/
   frequency_sweep.py  # FFT frequency-error sweep over vartheta
 build/
   *.jaqal        # generated Jaqal programs
+  *_angles.npy   # generated notebook evolution angles
+  *_angles.csv   # CSV sidecar for the same angle data
   *.png          # generated plots
 ```
 
@@ -33,11 +35,21 @@ Generate Phil's DMANH+ Jaqal, density plot, `H_sim` trace, and readout/chi plots
 make dmanh
 ```
 
-Generate the same DMANH+ fitted well with a coarser `vartheta=1.6` Trotter step:
+This also writes `build/dmanh_angles.npy` and `build/dmanh_angles.csv`. The
+NumPy file has shape `(2, steps)` and contains only the per-step displacement
+coordinates. The CSV has one row per evolution step; row `step=k` corresponds
+to `dmanh_angles.npy[:, k]`.
+
+Audit the saved result notebook's actual probability-bin observable:
 
 ```sh
-make dmanh-vartheta-1p6
+make notebook-observable-audit
 ```
+
+This simulates the notebook path directly: q0 preparation/evolution, q1
+readout, `measure_all`, and the saved `(prob[0]-prob[2])/(prob[0]+prob[2])`
+postprocessing. It is a diagnostic for the saved notebooks, not the intended
+McGarry observable.
 
 Generate Phil's requested FFT frequency-error sweep from `vartheta=0.1` to `3.0`:
 
@@ -49,7 +61,6 @@ This writes:
 
 ```text
 build/dmanh_frequency_sweep.csv
-build/dmanh_frequency_shift_vs_vartheta.png
 build/dmanh_frequency_spectra.png
 build/dmanh_frequency_trace_examples.png
 ```
@@ -122,22 +133,19 @@ The Makefile experiment targets use the same physical parameter form:
 | Target | `K` steps | `vartheta` | `B` rad/s | `delta` rad/s | `alpha0` | `x_min` | snapshots ms |
 |---|---:|---:|---:|---:|---:|---:|---|
 | `make dmanh` | `49` | `0.8` | `5.09628e3` | `1.29817e3` | `0.18512` | `1.25895` | `0, 4.081408, 7.691885` |
-| `make dmanh-vartheta-1p6` | `25` | `1.6` | `5.09628e3` | `1.29817e3` | `0.18512` | `1.25895` | `0, 4.081408, 7.848862` |
 | `make plots` | `20` | `0.8` | `4.0e3` | `3.141592653589793e3` | `0.5235987755982989` | `1.5` | `0, 2.00, 4.00` |
-
-The `dmanh-vartheta-1p6` target is the coarse-timestep check for Phil's
-question: it keeps the fitted DMANH+ well fixed by leaving `B`, `delta`,
-`alpha0`, and `x_min` unchanged, but doubles `vartheta`. Since
-`Delta t = vartheta / B`, the timestep becomes `313.954492 us`. The original
-`49`-step endpoint lands halfway between coarse steps, so this target uses
-`25` coarse steps and ends at `7.848862 ms`; the midpoint snapshot at
-`4.081408 ms` is exactly `13` coarse steps.
 
 The `dmanh-frequency-sweep` target keeps the same DMANH+ Hamiltonian and varies
 only the compiled-gate timestep through `Delta t = vartheta / B`. For each
 `vartheta`, it samples the exact `H_sim` trace and compiled xCD/Rz trace on the
 same timestep grid, estimates the dominant Fourier peak, and records the peak
 shift plus RMS trace error and evolution-gate count.
+
+The `*_hsim.png` plots overlay exact `H_sim` evolution, the compiled xCD/Rz
+semantic sequence, and an xSDF/Rz-spelled semantic sequence. The xSDF overlay
+checks the project convention that xSDF and xCD represent the same ideal
+conditional displacement; it is not a pulse-waveform simulation of
+`reference/Calibration_PulseDefinitions_curated.py`.
 
 ## Generated Jaqal structure
 
@@ -171,6 +179,12 @@ R q[probe] 0 theta
 ```
 
 where `theta = pi/2` selects the imaginary part of the characteristic function. `Rz` is used for the symmetric McGarry evolution, not for the Re/Im readout selector.
+
+The measurement plots simulate that parsed readout block on each requested
+prefix state. They still use an ideal state-vector/density-matrix model with no
+noise or decoherence, but the plotted `Im[chi]` and reconstructed Eq. 33
+density come from ideal readout Z expectations, not from bypassing the readout
+with direct state access.
 
 ## Core parameters
 
@@ -243,7 +257,7 @@ symmetric evolution: xCD + Rz
 readout/probe: R q[probe] 0 theta + xCD
 ```
 
-The ideal simulator treats `xCD`, `zCD`, and `Rz` as abstract gates on a truncated oscillator Hilbert space. It does not simulate red/blue sideband tones, Rabi rates, Lamb-Dicke factors, pulse calibration, mode crosstalk, heating, or measurement noise.
+The ideal simulator treats `xCD`, `xSDF`, `zCD`, and `Rz` as abstract gates on a truncated oscillator Hilbert space. `xSDF q re im` is parsed as the same ideal conditional displacement as `xCD q manifold mode re im`, with the shorter notebook argument layout. The simulator does not simulate red/blue sideband tones, Rabi rates, Lamb-Dicke factors, pulse calibration, mode crosstalk, heating, or measurement noise.
 
 The sideband manifold and mode index are passed through to the generated Jaqal as hardware addresses. They are not used by the ideal simulator except to parse the displacement arguments.
 

@@ -1,4 +1,4 @@
-# DMANH+ frequency sweep — FFT peak shift versus vartheta.
+# DMANH+ frequency sweep — FFT spectra and trace examples versus vartheta.
 
 [evolution]
 steps = 49
@@ -14,10 +14,8 @@ jaqal = "build/dmanh.jaqal"
 
 [frequency_sweep]
 csv = "build/dmanh_frequency_sweep.csv"
-shift_png = "build/dmanh_frequency_shift_vs_vartheta.png"
 spectra_png = "build/dmanh_frequency_spectra.png"
 trace_png = "build/dmanh_frequency_trace_examples.png"
-title = "DMANH+ FFT peak shift versus compiled-gate timestep"
 max_time_ms = 160
 vartheta_min = 0.1
 vartheta_max = 3.0

@@ -50,16 +50,14 @@
   - The DMANH+ `H_sim` trace uses `--hsim-max-time-ms 7.6918850612603702`, the exact `49 Delta t` endpoint required by the timestep-grid check.
   - `src/measure.py` now emits `build/dmanh_measurement_panels.png` and `build/dmanh_chi_slice_panels.png` for the same DMANH+ times.
 
-- Replaced the attempted `dmanh-4ms`/`dmanh-compact` Phil-facing variants with `make dmanh-vartheta-1p6`.
-  - This keeps the fitted DMANH+ well and dynamics fixed: `B=5.09628e3 rad/s`, `delta=1.29817e3 rad/s`, `alpha0=0.18512`, and `x_min=1.25895`.
-  - It increases only `vartheta` from `0.8` to `1.6`, so `Delta t = vartheta / B = 313.954492 us`.
-  - Because the original `49`-step endpoint at `7.691885 ms` is halfway between coarse steps, the target uses `25` steps and ends at `7.848862 ms`; the midpoint `4.081408 ms` is exactly `13` coarse steps.
-  - It writes `build/dmanh_vartheta_1p6.jaqal`, `build/dmanh_vartheta_1p6.png`, `build/dmanh_vartheta_1p6_hsim.png`, `build/dmanh_vartheta_1p6_measurement_panels.png`, and `build/dmanh_vartheta_1p6_chi_slice_panels.png`.
+- Removed the obsolete standalone `dmanh-vartheta-1p6` experiment target and
+  TOML. Coarse-timestep checks now live in the frequency sweep rather than as
+  a separate named experiment.
 
 - Added Phil's FFT frequency-error sweep as `make dmanh-frequency-sweep`.
   - `src/frequency_sweep.py` compares exact `H_sim` propagation with compiled xCD/Rz propagation while sweeping `vartheta=0.1..3.0`.
   - The sweep keeps `B`, `delta`, `alpha0`, and `x_min` fixed and changes only `Delta t = vartheta / B`.
-  - It writes `build/dmanh_frequency_sweep.csv`, `build/dmanh_frequency_shift_vs_vartheta.png`, `build/dmanh_frequency_spectra.png`, and `build/dmanh_frequency_trace_examples.png`.
+  - It writes `build/dmanh_frequency_sweep.csv`, `build/dmanh_frequency_spectra.png`, and `build/dmanh_frequency_trace_examples.png`.
 
 ## 2026-06-19
 
@@ -280,6 +278,11 @@
 - Simplified the compiler's notebook export.
   - `make dmanh` now writes only the angle array needed by the notebook:
     `build/dmanh_angles.npy`.
+  - It also writes `build/dmanh_angles.csv` as a human-readable sidecar. CSV
+    row `step=k` corresponds to column `k` of `build/dmanh_angles.npy`.
+  - The exported angle artifacts now contain only the two per-step SDF/xCD
+    displacement coordinates. The constant notebook Rz angle/vartheta is not
+    exported.
   - The old `build/notebook/betas.npy` export was removed because the five
     readout beta/imBeta values are fixed in the notebooks and should not be a
     compiler artifact.
@@ -287,7 +290,7 @@
     "build/dmanh_angles.npy"` instead of `output.notebook = "build/notebook"`.
   - The compiler still accepts old directory-style `--export-numpy` /
     `output.notebook` paths as compatibility aliases, but those aliases write
-    only `angles.npy`, not `betas.npy`.
+    only `angles.npy` and `angles.csv`, not `betas.npy`.
 
 - Corrected the xCD/readout coordinate convention after checking the paper and
   the Sandia pulse definitions.
@@ -308,6 +311,162 @@
   - Updated the active Indiana DMANH notebook header to `let reBeta 0`.
   - The saved-data slope overlay keeps the old rotated mapping as a legacy
     option for the already-run `reBeta=-0.2` notebooks.
+
+- Updated the measurement simulation so experiment-facing `chi` and Eq. 33
+  density plots execute the parsed readout block from the generated Jaqal.
+  - `src/simulator.py` now preserves the final readout gates instead of only
+    returning preparation/evolution blocks. It also canonicalizes `xSDF` as
+    `xCD` for the semantic simulator.
+  - `src/measure.py` now computes plotted `Re[chi]`/`Im[chi]` from ideal
+    probe-Z readout experiments on each prefix state. Direct
+    `chi(beta)=<D(beta)>` evaluation remains only as a roundoff audit column.
+  - `src/readout_x_trace.py` now uses the parsed readout block for expected
+    saved-data overlays before converting the ideal result back to McGarry
+    `Im[chi]` for slope fitting.
+
+- Added an xSDF-spelled overlay to the `H_sim` comparison plots.
+  - `reference/Calibration_PulseDefinitions_curated.py` has separate
+    `gate_xSDF` and `gate_xCD` code paths: `gate_xSDF` uses the older direct
+    SDF helper, while `gate_xCD` routes through `gate_CD` and the newer
+    sideband-manifold/mode/Fock-state calibration plumbing.
+  - Both phase-0 paths call the same `find_t_phi_pi2` displacement-angle
+    helper after their calibration-specific scaling/sign choices, so the local
+    truncated-Fock simulator now plots the xSDF/Rz semantic sequence against
+    the xCD/Rz semantic sequence.
+  - This is an ideal semantic comparison only. It does not simulate the actual
+    red/blue sideband waveforms, Rabi rates, calibration amplitudes, or
+    `disp_scale_factor` choices in the curated pulse-definition file.
+  - Fixed the semantic parser so notebook-style `xSDF q[0] reBeta imBeta`
+    uses the shorter two-coordinate argument layout rather than the
+    `xCD q[0] manifold mode reBeta imBeta` layout.
+
+- Added temporary diagnostic hypothesis overlays to `readout_x_trace`.
+  - These do not replace the correct exact-`H_sim` or compiled-gate expected
+    traces. They are explicitly labeled "hypothesis" curves meant to answer
+    Phil's question in reverse: what kind of simulation-side change would be
+    needed to resemble the saved repeat data?
+  - The generated `actual_vs_expected_*` plots/CSVs now include:
+    half-strength preparation only, half-strength preparation plus half
+    evolution displacement, and half-strength preparation plus the old saved
+    notebook gate order.
+  - For the 1000-repeat data at steps `0`, `13`, `26`, and `49`, the saved
+    slope trace is `[-0.5179,-0.2500,-0.1142,-0.0868]`. The half-prep-only
+    exact-`H_sim` hypothesis gives `[-0.5779,-0.3815,-0.0175,+0.5866]`; the
+    half-prep plus half-alpha hypothesis gives
+    `[-0.5779,+0.3725,+0.0942,+0.3786]`; and the half-prep plus saved-order
+    compiled-gate hypothesis gives `[-0.5779,-0.4878,-0.1234,+0.6399]`.
+  - Conclusion so far: a factor-of-two preparation scale can explain the
+    reduced `t=0` magnitude, but it does not explain the late-time flatness.
+    The old saved-notebook gate order also does not explain the final trace by
+    itself. The mismatch therefore still points to an additional readout
+    contrast/axis issue, a missing experimental operation, or a more severe
+    hardware/runtime discrepancy rather than just the simple SDF scale
+    convention.
+
+- Added `src/notebook_observable_audit.py` and `make notebook-observable-audit`.
+  - This simulates the saved notebook's observable directly, rather than the
+    intended McGarry observable: q0 preparation/evolution, q1 readout,
+    `measure_all`, and the notebook postprocessing
+    `(prob[0]-prob[2])/(prob[0]+prob[2])`.
+  - The audit uses the angle array printed in
+    `results/20260625_Data/003_1000 repeats/output.ipynb`, so it follows the
+    saved notebook's old `+alpha,-alpha,-alpha,+alpha` order and
+    `reBeta=-0.2` readout condition.
+  - Under the local ideal xSDF semantics, the notebook as written has the
+    wrong raw readout sign relative to the saved `expZ_imMeas` slope. Flipping
+    the readout sign gives the correct sign, but the full-strength prep/evolve
+    trace is still much too large.
+  - For the 1000-repeat data, the saved notebook-extracted slope trace at
+    steps `0`, `13`, `26`, and `49` is
+    `[-0.5179,-0.2500,-0.1142,-0.0868]`. The sign-flipped half-prep
+    notebook-observable hypothesis gives
+    `[-0.5664,-0.3495,+0.8261,-0.1328]`; the sign-flipped full-prep with an
+    extra half readout scale gives `[-0.6048,-0.5325,+0.5825,+0.0825]`.
+    Both can explain the initial scale neighborhood, but both predict a large
+    mid-run excursion that is absent from the saved data.
+  - The best coarse no-noise fits to the full saved notebook observable require
+    evolution to be nearly absent or strongly suppressed, often with an even
+    smaller effective readout scale; e.g. a representative weak-evolution
+    family gives `[-0.2870,-0.2857,-0.2406,-0.0134]`. This matches the
+    flatness better but no longer matches the `t=0` scale.
+  - Current interpretation: the first-displacement problem and the late-time
+    flatness are not explained by one sign or one factor-of-two convention.
+    The saved notebook likely combines at least a readout sign/coordinate
+    problem with a separate suppression/misexecution of preparation/evolution
+    strength or a probability-bin/postselection observable that is not the
+    intended McGarry readout.
+
+- Agent/model: Claude, Opus 4.8.
+
+- Answered Phil's request to re-simulate the expected result under the actual
+  saved-measurement condition `reBeta=-0.2` for all measurements.
+  - Ran `src/readout_x_trace.py --expected-readout-re-beta -0.2` into
+    `build/readout_x_trace_reBeta_-0.2/` (separate dir so the corrected
+    `reBeta=0` build is not clobbered). No data was re-taken.
+  - Result: `reBeta=-0.2` is essentially identical to `reBeta=0`. The
+    1000-repeat exact-`H_sim` expected trace at steps `0`, `13`, `26`, `49`
+    is `[-1.0730,-0.6662,+0.1503,+0.9662]` at `reBeta=-0.2` versus
+    `[-1.0947,-0.6685,+0.1530,+0.9757]` at `reBeta=0` (~2% difference).
+    Physical reason: `reBeta` only shifts the real part of the readout
+    displacement, but the slope is extracted along the `Im[beta]` axis, so the
+    `Im[chi]` slope is insensitive to `reBeta`. The `reBeta=-0.2` bug is
+    therefore NOT the source of the scale/shape mismatch; the data should be
+    compared to ~the same curve we already had.
+
+- Clarified what the 50/500/1000 "repeats" datasets are: identical circuit and
+  hardware program, differing only in shot count (statistical averaging). Data
+  arrays are all shape `(5, 50)` (5 `imBeta` points x 50 timesteps). Implied
+  per-point shot noise ~1/sqrt(N): 0.14 (50), 0.045 (500), 0.032 (1000).
+  - Consequence: the late-time "flattening getting worse with more repeats" is
+    not a physical change. Decoherence acts within a single shot's evolution
+    and is independent of repeat count. The flattening is the true signal,
+    only resolved once the noise floor drops; the 50-repeat apparent match to
+    the swinging hypothesis is noise (late-time error bars +/-0.15..0.27).
+
+- Settled on a realistic two-part hypothesis for the data and added it to the
+  `readout_x_trace` expected overlays.
+  - Knob 1, "0.5x prep": the preparation conditional displacement delivers half
+    the intended amplitude, so the wavepacket starts at `|alpha0|/2`. Since
+    `<x> = sqrt(2) Re<a>` and `<a>=alpha`, this halves `<x>` at all times and
+    explains the factor-of-2 at `t=0` (data `-0.518` vs ideal `-1.073`, ratio
+    0.48). It only rescales amplitude; the shape still swings negative to
+    positive, so alone it gives RMS ~0.33 to the 1000-repeat data.
+  - Knob 2, `H_sim` damping: added a phenomenological Lindblad dissipator
+    `gamma*D[a]` on top of the unitary `H_sim` in a new `damped_hsim_rhos`
+    that evolves the postselected motional density matrix via the column-
+    stacked Liouvillian. It makes `<a>(t) = alpha0 e^{-i w t} e^{-gamma t/2}`,
+    so `<x>(t)` keeps oscillating inside an `exp(-gamma t/2)` envelope that
+    decays the swing toward zero -> the late-time flattening. This decay is a
+    function of evolution TIME, not repeat count.
+  - Honest naming caveat: the implemented term is amplitude damping (energy
+    relaxation toward the motional ground state), not literally pure dephasing
+    (`D[a^dagger a]`). For this `<x>` observable the two are nearly
+    indistinguishable (both give the `exp(-gamma t/2)` envelope); they differ
+    only in `<n>`/energy, which this data does not measure. Switching to
+    `D[a^dagger a]` would barely change the fitted curve.
+  - Default `gamma = 500/s` (time constant `2/gamma ~ 4 ms`, comparable to the
+    7.7 ms run), tunable via `--hsim-damping-rate`. Chosen coarsely; "we do
+    not need to be so precise." A scan showed full-trace RMS still inching down
+    past `gamma ~ 650/s`, but `500/s` is a reasonable round value.
+  - Combined "0.5x prep + H_sim damping" full-trace RMS to data: 0.31 (50
+    repeats, noise-dominated), 0.10 (500), 0.09 (1000). At steps `0,13,26,49`
+    the 1000-repeat data `[-0.518,-0.250,-0.114,-0.087]` versus the combined
+    hypothesis `[-0.566,-0.261,-0.040,+0.051]`.
+
+- `src/readout_x_trace.py` changes for this round (kept minimal):
+  - New `DEFAULT_HSIM_DAMPING_RATE = 500.0` and `--hsim-damping-rate` CLI flag.
+  - New `damped_hsim_rhos(...)` Lindblad propagator; imports
+    `annihilation_matrix` from `simulator`.
+  - `HypothesisTrace` gained a `damping_rate` field; CSV gained a
+    `hypothesis_<i>_damping_rate` column.
+  - Diagnostic hypotheses reduced to two: `hypothesis: 0.5x prep` and
+    `hypothesis: 0.5x prep + H_sim damping`. The earlier `0.5x prep + 0.5x
+    alpha` and `0.5x prep + saved gate order` curves were removed at Phil's
+    request, and the damping legend label no longer prints the `gamma` value.
+
+- Still unexplained: the early-time blip/dip, which lives in a different
+  quantity (the notebook's directly-plotted observable, not the slope-extracted
+  `<x>`) and is untouched by either knob.
 
 Open questions:
 

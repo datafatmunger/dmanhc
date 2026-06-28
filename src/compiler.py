@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import cmath
+import csv
 import math
 from pathlib import Path
 
@@ -144,11 +145,10 @@ def build_evolution_lines(args: argparse.Namespace) -> list[str]:
 
 
 def build_angles(args: argparse.Namespace) -> np.ndarray:
-    """Return a (3, steps) array of gate parameters per evolution step.
+    """Return a (2, steps) array of gate parameters per evolution step.
 
     Row 0: -alpha.real  (first xCD real argument)
     Row 1: -alpha.imag  (first xCD imaginary argument)
-    Row 2: -vartheta    (Rz angle)
     """
     max_time_s = args.max_time_ms / 1000.0
     dt_s = args.dt_us * 1e-6
@@ -158,13 +158,12 @@ def build_angles(args: argparse.Namespace) -> np.ndarray:
         steps = args.steps
 
     delta = getattr(args, "delta_rad_s", 2.0 * math.pi * args.delta_hz)
-    angles = np.empty((3, steps))
+    angles = np.empty((2, steps))
     for step in range(steps):
         zeta = args.alpha_phase_offset + delta * step * dt_s
         alpha = args.alpha0 * cmath.exp(1j * zeta)
         angles[0, step] = -alpha.real
         angles[1, step] = -alpha.imag
-        angles[2, step] = -args.vartheta
     return angles
 
 
@@ -297,9 +296,10 @@ def xcd_readout_line(
 #       Filesystem path for the generated Jaqal. This has no McGarry-paper
 #       counterpart.
 #   --export-angles
-#       Filesystem path for the exported notebook angle array. If a directory is
-#       supplied for compatibility with older configs, the compiler writes
-#       angles.npy inside it.
+#       Filesystem path for the exported notebook angle array. The compiler also
+#       writes a CSV sidecar with the same basename. If a directory is supplied
+#       for compatibility with older configs, the compiler writes angles.npy and
+#       angles.csv inside it.
 COMPILER_TOML_MAP = {
     "evolution.steps": "steps",
     "evolution.B_rad_s": "b_rad_s",
@@ -392,8 +392,9 @@ def parse_args() -> argparse.Namespace:
         default=None,
         metavar="PATH",
         help=(
-            "Export the notebook angle array to PATH. If PATH is a directory, "
-            "write angles.npy inside it for compatibility with older configs."
+            "Export the notebook angle array to PATH and write a CSV sidecar. "
+            "If PATH is a directory, write angles.npy and angles.csv inside it "
+            "for compatibility with older configs."
         ),
     )
     parser.add_argument(
@@ -412,14 +413,37 @@ def export_angles(args: argparse.Namespace) -> None:
     output = args.export_angles
     if output.suffix == ".npy":
         angles_path = output
+        csv_path = output.with_suffix(".csv")
     else:
         angles_path = output / "angles.npy"
+        csv_path = output / "angles.csv"
     angles_path.parent.mkdir(parents=True, exist_ok=True)
 
     angles = build_angles(args)
     np.save(angles_path, angles)
+    with csv_path.open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "step",
+                "evolution_step",
+                "first_xcd_re",
+                "first_xcd_im",
+            ],
+        )
+        writer.writeheader()
+        for step in range(angles.shape[1]):
+            writer.writerow(
+                {
+                    "step": step,
+                    "evolution_step": step + 1,
+                    "first_xcd_re": f"{angles[0, step]:.17g}",
+                    "first_xcd_im": f"{angles[1, step]:.17g}",
+                }
+            )
 
     print(angles_path)
+    print(csv_path)
 
 
 def main() -> None:

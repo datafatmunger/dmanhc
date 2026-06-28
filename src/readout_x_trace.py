@@ -28,18 +28,28 @@ import matplotlib.pyplot as plt
 
 from simulator import (
     FOCK_CUTOFF,
+    annihilation_matrix,
+    apply_gate,
     apply_cosine_step_from_parameters,
     apply_harmonic_frame,
     apply_prep,
+    apply_q_block_from_parameters,
+    apply_xcd,
+    apply_xsdf,
+    apply_zcd,
+    canonical_gate_name,
+    cd_beta,
     compiled_gate_x_trace,
     exact_hsim_x_trace,
+    gate_name,
     hsim_hamiltonian,
     initial_state,
     jaqal_timestep_us,
     load_program_for_hsim_trace,
+    load_program_model_prep_and_readout,
     postselected_motional_vector,
 )
-from measure import characteristic_function, motional_density_matrix
+from measure import motional_density_matrix, readout_chi_from_gates
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -51,7 +61,12 @@ DEFAULT_DT_MS = 0.8 / 5.09628e3 * 1.0e3
 DEFAULT_SELECTED_STEPS = [0, 13, 26, 49]
 DEFAULT_EXPECTED_READOUT_RE_BETA = 0.0
 DEFAULT_EXPECTED_BETA_MAPPING = "direct"
+DEFAULT_EXPECTED_PROBE_INITIAL_STATE = "up"
 BETA_MAPPING_CHOICES = ("sandia-local", "direct", "direct-double")
+# Phenomenological motional amplitude-damping rate (1/s) applied to H_sim in the
+# decoherence hypothesis. The default was chosen to roughly reproduce the
+# 1000-repeat late-time decay; tune with --hsim-damping-rate.
+DEFAULT_HSIM_DAMPING_RATE = 500.0
 
 
 def notebook_beta_to_mcgarry_beta(raw_beta: complex, beta_mapping: str) -> complex:
@@ -88,12 +103,26 @@ class DatasetFit:
 class ExpectedReadoutTrace:
     beta_mapping: str
     readout_re_beta: float
+    probe_initial_state: str
     mapped_betas: np.ndarray
     im_chi_values: np.ndarray
     slopes: np.ndarray
     intercepts: np.ndarray
     corrected_x: np.ndarray
     raw_slope_over_sqrt2: np.ndarray
+
+
+@dataclass(frozen=True)
+class HypothesisTrace:
+    label: str
+    corrected_x: np.ndarray
+    raw_slope_over_sqrt2: np.ndarray
+    kind: str
+    prep_scale: float
+    alpha_scale: float
+    amplitude_scale: float
+    reverse_order: bool
+    damping_rate: float
 
 
 def repeat_count(path: Path) -> int | None:
@@ -292,6 +321,8 @@ def fit_expected_readout_trace(
     im_betas: np.ndarray,
     mapped_betas: np.ndarray,
     cutoff: int,
+    readout_gates: list[object],
+    probe_initial_state: str,
     measurement_im_chi_sign: float,
     beta_mapping: str,
     readout_re_beta: float,
@@ -299,7 +330,13 @@ def fit_expected_readout_trace(
     values = np.empty((im_betas.size, len(rhos)), dtype=np.float64)
     for row, beta in enumerate(mapped_betas):
         for column, rho in enumerate(rhos):
-            values[row, column] = characteristic_function(beta, rho, cutoff).imag
+            values[row, column] = readout_chi_from_gates(
+                rho,
+                cutoff,
+                readout_gates,
+                beta,
+                probe_initial_state,
+            ).imag
 
     design = np.column_stack([im_betas, np.ones_like(im_betas)])
     coeffs, *_ = np.linalg.lstsq(design, values, rcond=None)
@@ -309,6 +346,7 @@ def fit_expected_readout_trace(
     return ExpectedReadoutTrace(
         beta_mapping=beta_mapping,
         readout_re_beta=readout_re_beta,
+        probe_initial_state=probe_initial_state,
         mapped_betas=mapped_betas,
         im_chi_values=values,
         slopes=slopes,
@@ -318,13 +356,53 @@ def fit_expected_readout_trace(
     )
 
 
+def scaled_model(
+    model: dict[str, float],
+    alpha_scale: float = 1.0,
+    amplitude_scale: float = 1.0,
+) -> dict[str, float]:
+    scaled = dict(model)
+    scaled["alpha0"] *= alpha_scale
+    scaled["lambda_period"] = math.pi / (math.sqrt(2.0) * scaled["alpha0"])
+    scaled["amplitude"] *= amplitude_scale
+    return scaled
+
+
+def apply_prep_with_displacement_scale(
+    prep,
+    cutoff: int,
+    prep_scale: float,
+) -> np.ndarray:
+    if math.isclose(prep_scale, 1.0, rel_tol=0.0, abs_tol=1e-15):
+        return apply_prep(initial_state(cutoff), prep, cutoff)
+
+    state = initial_state(cutoff)
+    for gate in prep:
+        name = gate_name(gate)
+        canonical_name = canonical_gate_name(gate)
+        if name == "xSDF":
+            state = apply_xsdf(state, prep_scale * cd_beta(gate), cutoff)
+        elif canonical_name == "xCD":
+            state = apply_xcd(state, prep_scale * cd_beta(gate), cutoff)
+        elif canonical_name == "zCD":
+            state = apply_zcd(state, prep_scale * cd_beta(gate), cutoff)
+        else:
+            state = apply_gate(state, gate, cutoff)
+    return state
+
+
 def compiled_gate_rhos(
     prep,
     model: dict[str, float],
     times_ms: np.ndarray,
     cutoff: int,
     readout_state: str = "down",
+    prep_scale: float = 1.0,
+    alpha_scale: float = 1.0,
+    amplitude_scale: float = 1.0,
+    reverse_order: bool = False,
 ) -> list[np.ndarray]:
+    model = scaled_model(model, alpha_scale=alpha_scale, amplitude_scale=amplitude_scale)
     max_time_s = float(times_ms[-1]) * 1e-3
     dt = model["dt"]
     steps = round(max_time_s / dt)
@@ -335,19 +413,24 @@ def compiled_gate_rhos(
     if expected_times.shape != times_ms.shape or not np.allclose(expected_times, times_ms, atol=1e-9):
         raise ValueError("readout-simulated expected traces require the saved data timestep grid")
 
-    state = apply_prep(initial_state(cutoff), prep, cutoff)
+    state = apply_prep_with_displacement_scale(prep, cutoff, prep_scale)
     rhos: list[np.ndarray] = [motional_density_matrix(state, cutoff, readout_state)[0]]
 
     for step_index in range(steps):
         phase = model["alpha_phase_offset"] + model["delta"] * step_index * dt
         alpha = model["alpha0"] * complex(math.cos(phase), math.sin(phase))
-        state = apply_cosine_step_from_parameters(
-            state,
-            alpha,
-            model["dt"] * model["amplitude"],
-            model["varphi"],
-            cutoff,
-        )
+        vartheta = model["dt"] * model["amplitude"]
+        if reverse_order:
+            state = apply_q_block_from_parameters(state, alpha, vartheta, model["varphi"], cutoff)
+            state = apply_q_block_from_parameters(state, -alpha, vartheta, -model["varphi"], cutoff)
+        else:
+            state = apply_cosine_step_from_parameters(
+                state,
+                alpha,
+                vartheta,
+                model["varphi"],
+                cutoff,
+            )
         elapsed = (step_index + 1) * dt
         snapshot = apply_harmonic_frame(state, model["delta"], elapsed, cutoff)
         rhos.append(motional_density_matrix(snapshot, cutoff, readout_state)[0])
@@ -360,8 +443,12 @@ def exact_hsim_rhos(
     model: dict[str, float],
     times_ms: np.ndarray,
     cutoff: int,
+    prep_scale: float = 1.0,
+    alpha_scale: float = 1.0,
+    amplitude_scale: float = 1.0,
 ) -> list[np.ndarray]:
-    prepared_state = apply_prep(initial_state(cutoff), prep, cutoff)
+    model = scaled_model(model, alpha_scale=alpha_scale, amplitude_scale=amplitude_scale)
+    prepared_state = apply_prep_with_displacement_scale(prep, cutoff, prep_scale)
     motional_state = postselected_motional_vector(prepared_state, cutoff, "down")
 
     hamiltonian = hsim_hamiltonian(model, cutoff)
@@ -372,6 +459,51 @@ def exact_hsim_rhos(
     for time_s in times_ms * 1e-3:
         evolved = eigenvectors @ (np.exp(-1.0j * energies * time_s) * coefficients)
         rhos.append(np.outer(evolved, evolved.conj()))
+    return rhos
+
+
+def damped_hsim_rhos(
+    prep,
+    model: dict[str, float],
+    times_ms: np.ndarray,
+    cutoff: int,
+    prep_scale: float = 1.0,
+    damping_rate: float = 0.0,
+    readout_state: str = "down",
+) -> list[np.ndarray]:
+    """Evolve the postselected motional state under H_sim plus a Lindblad
+    amplitude-damping dissipator gamma*D[a], returning a density matrix per time.
+
+    The unitary part is identical to ``exact_hsim_rhos``; the dissipator drives
+    the oscillator toward its ground state at rate ``damping_rate`` (1/s), which
+    decays <x>(t) toward zero with an exp(-gamma t / 2) envelope.
+    """
+    prepared_state = apply_prep_with_displacement_scale(prep, cutoff, prep_scale)
+    motional_state = postselected_motional_vector(prepared_state, cutoff, readout_state)
+    rho0 = np.outer(motional_state, motional_state.conj())
+
+    hamiltonian = hsim_hamiltonian(model, cutoff)
+    annihilation = annihilation_matrix(cutoff)
+    number = annihilation.conj().T @ annihilation
+    identity = np.eye(cutoff, dtype=np.complex128)
+
+    # Column-stacked vec(rho): vec(A rho B) = (B^T (x) A) vec(rho).
+    commutator = -1.0j * (np.kron(identity, hamiltonian) - np.kron(hamiltonian.T, identity))
+    dissipator = (
+        np.kron(annihilation.conj(), annihilation)
+        - 0.5 * np.kron(identity, number)
+        - 0.5 * np.kron(number.T, identity)
+    )
+    liouvillian = commutator + damping_rate * dissipator
+
+    eigenvalues, eigenvectors = np.linalg.eig(liouvillian)
+    projected = np.linalg.solve(eigenvectors, rho0.reshape(-1, order="F"))
+
+    rhos: list[np.ndarray] = []
+    for time_s in times_ms * 1e-3:
+        vec_rho = eigenvectors @ (np.exp(eigenvalues * time_s) * projected)
+        rho = vec_rho.reshape((cutoff, cutoff), order="F")
+        rhos.append(0.5 * (rho + rho.conj().T))
     return rhos
 
 
@@ -404,9 +536,10 @@ def expected_readout_traces(
     beta_mapping: str,
     cutoff: int,
     measurement_im_chi_sign: float,
+    probe_initial_state: str,
 ) -> tuple[ExpectedReadoutTrace, ExpectedReadoutTrace, np.ndarray, np.ndarray]:
     dt_us = jaqal_timestep_us(jaqal)
-    model, prep = load_program_for_hsim_trace(jaqal, dt_us)
+    model, prep, readout_gates = load_program_model_prep_and_readout(jaqal, dt_us)
     mapped_betas = mapped_readout_betas(readout_re_beta, im_betas, beta_mapping)
 
     compiled_rhos = compiled_gate_rhos(prep, model, times_ms, cutoff)
@@ -416,6 +549,8 @@ def expected_readout_traces(
         im_betas,
         mapped_betas,
         cutoff,
+        readout_gates,
+        probe_initial_state,
         measurement_im_chi_sign,
         beta_mapping,
         readout_re_beta,
@@ -425,6 +560,8 @@ def expected_readout_traces(
         im_betas,
         mapped_betas,
         cutoff,
+        readout_gates,
+        probe_initial_state,
         measurement_im_chi_sign,
         beta_mapping,
         readout_re_beta,
@@ -443,13 +580,137 @@ def expected_readout_traces(
     return compiled_readout, exact_readout, compiled_direct_x, exact_direct_x
 
 
+def readout_trace_from_rhos(
+    rhos: list[np.ndarray],
+    im_betas: np.ndarray,
+    mapped_betas: np.ndarray,
+    cutoff: int,
+    readout_gates: list[object],
+    measurement_im_chi_sign: float,
+    probe_initial_state: str,
+    beta_mapping: str,
+    readout_re_beta: float,
+) -> ExpectedReadoutTrace:
+    return fit_expected_readout_trace(
+        rhos,
+        im_betas,
+        mapped_betas,
+        cutoff,
+        readout_gates,
+        probe_initial_state,
+        measurement_im_chi_sign,
+        beta_mapping,
+        readout_re_beta,
+    )
+
+
+def diagnostic_hypothesis_traces(
+    jaqal: Path,
+    times_ms: np.ndarray,
+    im_betas: np.ndarray,
+    readout_re_beta: float,
+    beta_mapping: str,
+    cutoff: int,
+    measurement_im_chi_sign: float,
+    probe_initial_state: str,
+    hsim_damping_rate: float = DEFAULT_HSIM_DAMPING_RATE,
+) -> list[HypothesisTrace]:
+    dt_us = jaqal_timestep_us(jaqal)
+    model, prep, readout_gates = load_program_model_prep_and_readout(jaqal, dt_us)
+    mapped_betas = mapped_readout_betas(readout_re_beta, im_betas, beta_mapping)
+
+    configs = [
+        {
+            "label": r"hypothesis: 0.5x prep",
+            "kind": "exact_hsim",
+            "prep_scale": 0.5,
+            "alpha_scale": 1.0,
+            "amplitude_scale": 1.0,
+            "reverse_order": False,
+            "damping_rate": 0.0,
+        },
+        {
+            "label": r"hypothesis: 0.5x prep + $H_{\mathrm{sim}}$ damping",
+            "kind": "damped_hsim",
+            "prep_scale": 0.5,
+            "alpha_scale": 1.0,
+            "amplitude_scale": 1.0,
+            "reverse_order": False,
+            "damping_rate": hsim_damping_rate,
+        },
+    ]
+
+    traces: list[HypothesisTrace] = []
+    for config in configs:
+        if config["kind"] == "exact_hsim":
+            rhos = exact_hsim_rhos(
+                prep,
+                model,
+                times_ms,
+                cutoff,
+                prep_scale=config["prep_scale"],
+                alpha_scale=config["alpha_scale"],
+                amplitude_scale=config["amplitude_scale"],
+            )
+        elif config["kind"] == "compiled_gate":
+            rhos = compiled_gate_rhos(
+                prep,
+                model,
+                times_ms,
+                cutoff,
+                prep_scale=config["prep_scale"],
+                alpha_scale=config["alpha_scale"],
+                amplitude_scale=config["amplitude_scale"],
+                reverse_order=config["reverse_order"],
+            )
+        elif config["kind"] == "damped_hsim":
+            rhos = damped_hsim_rhos(
+                prep,
+                model,
+                times_ms,
+                cutoff,
+                prep_scale=config["prep_scale"],
+                damping_rate=config["damping_rate"],
+            )
+        else:
+            raise ValueError(f"unsupported hypothesis kind {config['kind']!r}")
+
+        readout_trace = readout_trace_from_rhos(
+            rhos,
+            im_betas,
+            mapped_betas,
+            cutoff,
+            readout_gates,
+            measurement_im_chi_sign,
+            probe_initial_state,
+            beta_mapping,
+            readout_re_beta,
+        )
+        traces.append(
+            HypothesisTrace(
+                label=str(config["label"]),
+                corrected_x=readout_trace.corrected_x,
+                raw_slope_over_sqrt2=readout_trace.raw_slope_over_sqrt2,
+                kind=str(config["kind"]),
+                prep_scale=float(config["prep_scale"]),
+                alpha_scale=float(config["alpha_scale"]),
+                amplitude_scale=float(config["amplitude_scale"]),
+                reverse_order=bool(config["reverse_order"]),
+                damping_rate=float(config["damping_rate"]),
+            )
+        )
+
+    return traces
+
+
 def plot_expected_overlay(
     fit: DatasetFit,
     compiled_readout: ExpectedReadoutTrace,
     exact_readout: ExpectedReadoutTrace,
     output: Path,
+    hypothesis_traces: list[HypothesisTrace] | None = None,
 ) -> None:
-    figure, axis = plt.subplots(figsize=(7.3, 4.4), constrained_layout=True)
+    figure, axis = plt.subplots(figsize=(8.0, 4.7), constrained_layout=True)
 
     axis.plot(
         fit.times_ms,
@@ -478,6 +739,18 @@ def plot_expected_overlay(
         capsize=1.8,
         label=f"{label_for(fit)} slope extraction",
     )
+    if hypothesis_traces:
+        colors = ["#7b4a9e", "#d17827", "#6a6a6a", "#c04f8a"]
+        linestyles = [":", "-.", (0, (5, 2, 1, 2)), (0, (2, 1))]
+        for index, trace in enumerate(hypothesis_traces):
+            axis.plot(
+                fit.times_ms,
+                trace.corrected_x,
+                color=colors[index % len(colors)],
+                linewidth=1.4,
+                linestyle=linestyles[index % len(linestyles)],
+                label=trace.label,
+            )
     axis.axhline(0.0, color="black", linewidth=0.8, alpha=0.28)
     axis.set_xlabel("time (ms)")
     axis.set_ylabel(r"readout-slope $\langle x\rangle$")
@@ -486,10 +759,11 @@ def plot_expected_overlay(
     axis.legend(loc="best", fontsize=8, frameon=True)
     figure.suptitle(
         (
-            r"Expected fixed-reBeta readout-slope trace versus saved data"
+            r"Expected readout-slope trace versus saved data"
             "\n"
-            f"raw reBeta={compiled_readout.readout_re_beta:+.3f}, "
-            f"beta mapping={compiled_readout.beta_mapping}; mapped beta values are in the CSV"
+            f"readout reBeta={compiled_readout.readout_re_beta:+.3f}; "
+            f"mapping={compiled_readout.beta_mapping}; "
+            f"probe={compiled_readout.probe_initial_state}; mapped betas in CSV"
         ),
         fontsize=11,
     )
@@ -505,6 +779,7 @@ def write_expected_csv(
     compiled_direct_x: np.ndarray,
     exact_direct_x: np.ndarray,
     output: Path,
+    hypothesis_traces: list[HypothesisTrace] | None = None,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", newline="") as handle:
@@ -526,9 +801,25 @@ def write_expected_csv(
             "raw_slope_over_sqrt2_minus_exact_readout",
             "measurement_im_chi_sign",
             "readout_re_beta",
+            "expected_probe_initial_state",
             "beta_mapping",
             "mapped_betas",
         ]
+        hypothesis_traces = hypothesis_traces or []
+        for index, trace in enumerate(hypothesis_traces):
+            fieldnames.extend(
+                [
+                    f"hypothesis_{index}_label",
+                    f"hypothesis_{index}_x",
+                    f"hypothesis_{index}_raw_slope_over_sqrt2",
+                    f"hypothesis_{index}_kind",
+                    f"hypothesis_{index}_prep_scale",
+                    f"hypothesis_{index}_alpha_scale",
+                    f"hypothesis_{index}_amplitude_scale",
+                    f"hypothesis_{index}_reverse_order",
+                    f"hypothesis_{index}_damping_rate",
+                ]
+            )
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         mapped = " ".join(
@@ -536,29 +827,43 @@ def write_expected_csv(
         )
         for step in range(fit.times_ms.size):
             data_x = fit.x_estimates[step]
-            writer.writerow(
-                {
-                    "step": step,
-                    "time_ms": f"{fit.times_ms[step]:.12g}",
-                    "data_x": f"{data_x:.17g}",
-                    "data_x_stderr": f"{fit.x_stderr[step]:.17g}",
-                    "raw_slope_over_sqrt2": f"{fit.raw_slope_over_sqrt2[step]:.17g}",
-                    "compiled_gate_readout_x": f"{compiled_readout.corrected_x[step]:.17g}",
-                    "exact_hsim_readout_x": f"{exact_readout.corrected_x[step]:.17g}",
-                    "compiled_gate_raw_slope_over_sqrt2": f"{compiled_readout.raw_slope_over_sqrt2[step]:.17g}",
-                    "exact_hsim_raw_slope_over_sqrt2": f"{exact_readout.raw_slope_over_sqrt2[step]:.17g}",
-                    "compiled_gate_direct_x": f"{compiled_direct_x[step]:.17g}",
-                    "exact_hsim_direct_x": f"{exact_direct_x[step]:.17g}",
-                    "data_minus_compiled_readout": f"{data_x - compiled_readout.corrected_x[step]:.17g}",
-                    "raw_slope_over_sqrt2_minus_compiled_readout": f"{fit.raw_slope_over_sqrt2[step] - compiled_readout.raw_slope_over_sqrt2[step]:.17g}",
-                    "data_minus_exact_readout": f"{data_x - exact_readout.corrected_x[step]:.17g}",
-                    "raw_slope_over_sqrt2_minus_exact_readout": f"{fit.raw_slope_over_sqrt2[step] - exact_readout.raw_slope_over_sqrt2[step]:.17g}",
-                    "measurement_im_chi_sign": f"{fit.measurement_im_chi_sign:.17g}",
-                    "readout_re_beta": f"{compiled_readout.readout_re_beta:.17g}",
-                    "beta_mapping": compiled_readout.beta_mapping,
-                    "mapped_betas": mapped,
-                }
-            )
+            row = {
+                "step": step,
+                "time_ms": f"{fit.times_ms[step]:.12g}",
+                "data_x": f"{data_x:.17g}",
+                "data_x_stderr": f"{fit.x_stderr[step]:.17g}",
+                "raw_slope_over_sqrt2": f"{fit.raw_slope_over_sqrt2[step]:.17g}",
+                "compiled_gate_readout_x": f"{compiled_readout.corrected_x[step]:.17g}",
+                "exact_hsim_readout_x": f"{exact_readout.corrected_x[step]:.17g}",
+                "compiled_gate_raw_slope_over_sqrt2": f"{compiled_readout.raw_slope_over_sqrt2[step]:.17g}",
+                "exact_hsim_raw_slope_over_sqrt2": f"{exact_readout.raw_slope_over_sqrt2[step]:.17g}",
+                "compiled_gate_direct_x": f"{compiled_direct_x[step]:.17g}",
+                "exact_hsim_direct_x": f"{exact_direct_x[step]:.17g}",
+                "data_minus_compiled_readout": f"{data_x - compiled_readout.corrected_x[step]:.17g}",
+                "raw_slope_over_sqrt2_minus_compiled_readout": f"{fit.raw_slope_over_sqrt2[step] - compiled_readout.raw_slope_over_sqrt2[step]:.17g}",
+                "data_minus_exact_readout": f"{data_x - exact_readout.corrected_x[step]:.17g}",
+                "raw_slope_over_sqrt2_minus_exact_readout": f"{fit.raw_slope_over_sqrt2[step] - exact_readout.raw_slope_over_sqrt2[step]:.17g}",
+                "measurement_im_chi_sign": f"{fit.measurement_im_chi_sign:.17g}",
+                "readout_re_beta": f"{compiled_readout.readout_re_beta:.17g}",
+                "expected_probe_initial_state": compiled_readout.probe_initial_state,
+                "beta_mapping": compiled_readout.beta_mapping,
+                "mapped_betas": mapped,
+            }
+            for index, trace in enumerate(hypothesis_traces):
+                row.update(
+                    {
+                        f"hypothesis_{index}_label": trace.label,
+                        f"hypothesis_{index}_x": f"{trace.corrected_x[step]:.17g}",
+                        f"hypothesis_{index}_raw_slope_over_sqrt2": f"{trace.raw_slope_over_sqrt2[step]:.17g}",
+                        f"hypothesis_{index}_kind": trace.kind,
+                        f"hypothesis_{index}_prep_scale": f"{trace.prep_scale:.17g}",
+                        f"hypothesis_{index}_alpha_scale": f"{trace.alpha_scale:.17g}",
+                        f"hypothesis_{index}_amplitude_scale": f"{trace.amplitude_scale:.17g}",
+                        f"hypothesis_{index}_reverse_order": str(trace.reverse_order),
+                        f"hypothesis_{index}_damping_rate": f"{trace.damping_rate:.17g}",
+                    }
+                )
+            writer.writerow(row)
 
 
 def write_csv(fits: list[DatasetFit], output: Path) -> None:
@@ -622,6 +927,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--expected-probe-initial-state",
+        choices=["up", "down"],
+        default=DEFAULT_EXPECTED_PROBE_INITIAL_STATE,
+        help=(
+            "Initial probe state used in the ideal parsed-readout simulation. "
+            "The resulting readout Z is converted back to McGarry Im[chi] "
+            "before fitting the expected slope."
+        ),
+    )
+    parser.add_argument(
         "--comparison-repeats",
         type=int,
         nargs="*",
@@ -629,6 +944,24 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Repeat counts to overlay against expected dynamics. Defaults to "
             "all discovered datasets."
+        ),
+    )
+    parser.add_argument(
+        "--skip-diagnostic-hypotheses",
+        action="store_true",
+        help=(
+            "Do not add temporary hypothesis curves to the expected-overlay "
+            "plots/CSVs. The baseline exact H_sim and compiled-gate curves are "
+            "always generated."
+        ),
+    )
+    parser.add_argument(
+        "--hsim-damping-rate",
+        type=float,
+        default=DEFAULT_HSIM_DAMPING_RATE,
+        help=(
+            "Motional amplitude-damping rate gamma (1/s) for the "
+            "'0.5x prep + H_sim damping' decoherence hypothesis."
         ),
     )
     parser.add_argument("--cutoff", type=int, default=FOCK_CUTOFF)
@@ -680,8 +1013,22 @@ def main() -> None:
             args.expected_beta_mapping,
             args.cutoff,
             fit.measurement_im_chi_sign,
+            args.expected_probe_initial_state,
         )
-        plot_expected_overlay(fit, compiled_readout, exact_readout, overlay_output)
+        hypothesis_traces = []
+        if not args.skip_diagnostic_hypotheses:
+            hypothesis_traces = diagnostic_hypothesis_traces(
+                args.expected_jaqal,
+                fit.times_ms,
+                im_betas,
+                args.expected_readout_re_beta,
+                args.expected_beta_mapping,
+                args.cutoff,
+                fit.measurement_im_chi_sign,
+                args.expected_probe_initial_state,
+                args.hsim_damping_rate,
+            )
+        plot_expected_overlay(fit, compiled_readout, exact_readout, overlay_output, hypothesis_traces)
         write_expected_csv(
             fit,
             compiled_readout,
@@ -689,6 +1036,7 @@ def main() -> None:
             compiled_direct_x,
             exact_direct_x,
             overlay_csv_output,
+            hypothesis_traces,
         )
         print(overlay_output)
         print(overlay_csv_output)

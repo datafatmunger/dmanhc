@@ -72,12 +72,21 @@ def gate_name(gate: GateStatement) -> str:
     return str(gate.name)
 
 
+def canonical_gate_name(gate: GateStatement) -> str:
+    name = gate_name(gate)
+    if name == "xSDF":
+        return "xCD"
+    return name
+
+
 def gate_args(gate: GateStatement) -> list[object]:
     return gate.parameters_linear
 
 
 def cd_beta(gate: GateStatement) -> complex:
     args = gate_args(gate)
+    if gate_name(gate) == "xSDF":
+        return complex(float(args[1]), float(args[2]))
     return complex(float(args[3]), float(args[4]))
 
 
@@ -127,7 +136,7 @@ PREP_PATTERNS = (
 STEP_PATTERN = ["xCD", "Rz", "xCD", "xCD", "Rz", "xCD"]
 
 def gate_names(gates: list[GateStatement]) -> list[str]:
-    return [gate_name(gate) for gate in gates]
+    return [canonical_gate_name(gate) for gate in gates]
 
 
 def step_blocks_from(gates: list[GateStatement], start: int) -> list[list[GateStatement]]:
@@ -142,11 +151,14 @@ def step_blocks_from(gates: list[GateStatement], start: int) -> list[list[GateSt
     return steps
 
 
-def split_program(gates: list[GateStatement]) -> tuple[list[GateStatement], list[list[GateStatement]]]:
-    # The hardware-facing Jaqal includes prepare_all, readout xCD/Rz gates, and
-    # measure_all around the McGarry evolution sequence. For ideal simulation,
-    # locate the Rz/xCD/Rz prep followed by whole Gc blocks and ignore the
-    # hardware-only wrapper statements.
+def split_program_sections(
+    gates: list[GateStatement],
+) -> tuple[list[GateStatement], list[list[GateStatement]], list[GateStatement]]:
+    # The hardware-facing Jaqal includes prepare_all, readout gates, and
+    # measure_all around the McGarry evolution sequence.  Locate the preparation,
+    # whole Gc blocks, and the final readout block separately so experiment-style
+    # simulators can execute the same readout gates instead of using direct state
+    # access.
     for start in range(len(gates)):
         for prep_pattern in PREP_PATTERNS:
             prep_end = start + len(prep_pattern)
@@ -156,12 +168,27 @@ def split_program(gates: list[GateStatement]) -> tuple[list[GateStatement], list
 
             steps = step_blocks_from(gates, prep_end)
             if steps:
-                return prep, steps
+                readout_start = prep_end + len(steps) * len(STEP_PATTERN)
+                readout: list[GateStatement] = []
+                for gate in gates[readout_start:]:
+                    name = canonical_gate_name(gate)
+                    if name == "measure_all":
+                        break
+                    if name in {"R", "xCD"}:
+                        readout.append(gate)
+                if not any(canonical_gate_name(gate) == "xCD" for gate in readout):
+                    raise ValueError("could not find final readout xCD/xSDF gate in the Jaqal program")
+                return prep, steps, readout
 
     raise ValueError(
         "could not find McGarry preparation followed by Sandia xCD/Rz Gc blocks "
         "inside the Jaqal program"
     )
+
+
+def split_program(gates: list[GateStatement]) -> tuple[list[GateStatement], list[list[GateStatement]]]:
+    prep, steps, _readout = split_program_sections(gates)
+    return prep, steps
 
 
 def infer_step_parameters(steps: list[list[GateStatement]], dt_s: float) -> list[StepParameters]:
@@ -299,6 +326,24 @@ def apply_xcd(state: np.ndarray, alpha: complex, cutoff: int) -> np.ndarray:
     x_amplitudes[1] = displacement_matrix(-alpha, cutoff) @ x_amplitudes[1]
     return (z_to_x @ x_amplitudes).reshape(2 * cutoff)
 
+
+def apply_xsdf(state: np.ndarray, alpha: complex, cutoff: int) -> np.ndarray:
+    return apply_xcd(state, alpha, cutoff)
+
+
+def apply_x_displacement_gate(
+    state: np.ndarray,
+    alpha: complex,
+    cutoff: int,
+    displacement_gate: str,
+) -> np.ndarray:
+    if displacement_gate == "xCD":
+        return apply_xcd(state, alpha, cutoff)
+    if displacement_gate == "xSDF":
+        return apply_xsdf(state, alpha, cutoff)
+    raise ValueError(f"unsupported x displacement gate: {displacement_gate}")
+
+
 def apply_zcd(state: np.ndarray, beta: complex, cutoff: int) -> np.ndarray:
     amplitudes = state.reshape((2, cutoff)).copy()
     amplitudes[0] = displacement_matrix(beta, cutoff) @ amplitudes[0]
@@ -323,6 +368,8 @@ def apply_sqr_phi(state: np.ndarray, vartheta: float, varphi: float, cutoff: int
 
 
 def apply_gate(state: np.ndarray, gate: GateStatement, cutoff: int) -> np.ndarray:
+    if gate_name(gate) == "xSDF":
+        return apply_xsdf(state, cd_beta(gate), cutoff)
     if gate_name(gate) == "xCD":
         return apply_xcd(state, cd_beta(gate), cutoff)
     if gate_name(gate) == "zCD":
@@ -360,10 +407,11 @@ def apply_q_block_from_parameters(
     vartheta: float,
     varphi: float,
     cutoff: int,
+    displacement_gate: str = "xCD",
 ) -> np.ndarray:
-    state = apply_xcd(state, alpha, cutoff)
+    state = apply_x_displacement_gate(state, alpha, cutoff, displacement_gate)
     state = apply_sqr_phi(state, -vartheta, varphi, cutoff)
-    state = apply_xcd(state, -alpha, cutoff)
+    state = apply_x_displacement_gate(state, -alpha, cutoff, displacement_gate)
     return state
 
 
@@ -373,9 +421,24 @@ def apply_cosine_step_from_parameters(
     vartheta: float,
     varphi: float,
     cutoff: int,
+    displacement_gate: str = "xCD",
 ) -> np.ndarray:
-    state = apply_q_block_from_parameters(state, -alpha, vartheta, -varphi, cutoff)
-    state = apply_q_block_from_parameters(state, alpha, vartheta, varphi, cutoff)
+    state = apply_q_block_from_parameters(
+        state,
+        -alpha,
+        vartheta,
+        -varphi,
+        cutoff,
+        displacement_gate=displacement_gate,
+    )
+    state = apply_q_block_from_parameters(
+        state,
+        alpha,
+        vartheta,
+        varphi,
+        cutoff,
+        displacement_gate=displacement_gate,
+    )
     return state
 
 
@@ -471,6 +534,7 @@ def compiled_gate_x_trace(
     max_time_ms: float,
     cutoff: int,
     readout_state: str = "down",
+    displacement_gate: str = "xCD",
 ) -> tuple[np.ndarray, np.ndarray]:
     # Ideal semantic simulation of the generated Sandia xCD/Rz gate pattern.
     # For times beyond the parsed file, extend the same McGarry step rule
@@ -494,6 +558,7 @@ def compiled_gate_x_trace(
             model["dt"] * model["amplitude"],
             model["varphi"],
             cutoff,
+            displacement_gate=displacement_gate,
         )
         elapsed = (step_index + 1) * dt
         snapshot = apply_harmonic_frame(state, model["delta"], elapsed, cutoff)
@@ -511,7 +576,7 @@ def load_program_model_and_snapshots(
     use_schrodinger_frame: bool,
 ) -> tuple[dict[str, float], dict[float, np.ndarray]]:
     gates = gate_program(jaqal)
-    prep, steps = split_program(gates)
+    prep, steps, _readout = split_program_sections(gates)
     parameters = infer_step_parameters(steps, dt_us * 1e-6)
     model = infer_double_well(parameters)
     snapshots = run_snapshots(
@@ -525,6 +590,28 @@ def load_program_model_and_snapshots(
     return model, snapshots
 
 
+def load_program_model_snapshots_and_readout(
+    jaqal: Path,
+    times_ms: list[float],
+    cutoff: int,
+    dt_us: float,
+    use_schrodinger_frame: bool,
+) -> tuple[dict[str, float], dict[float, np.ndarray], list[GateStatement]]:
+    gates = gate_program(jaqal)
+    prep, steps, readout = split_program_sections(gates)
+    parameters = infer_step_parameters(steps, dt_us * 1e-6)
+    model = infer_double_well(parameters)
+    snapshots = run_snapshots(
+        prep,
+        steps,
+        parameters,
+        times_ms,
+        cutoff,
+        use_schrodinger_frame=use_schrodinger_frame,
+    )
+    return model, snapshots, readout
+
+
 def load_program_for_hsim_trace(
     jaqal: Path,
     dt_us: float,
@@ -533,6 +620,16 @@ def load_program_for_hsim_trace(
     prep, steps = split_program(gates)
     parameters = infer_step_parameters(steps, dt_us * 1e-6)
     return infer_double_well(parameters), prep
+
+
+def load_program_model_prep_and_readout(
+    jaqal: Path,
+    dt_us: float,
+) -> tuple[dict[str, float], list[GateStatement], list[GateStatement]]:
+    gates = gate_program(jaqal)
+    prep, steps, readout = split_program_sections(gates)
+    parameters = infer_step_parameters(steps, dt_us * 1e-6)
+    return infer_double_well(parameters), prep, readout
 
 
 def potential_curve(xs: np.ndarray, model: dict[str, float]) -> np.ndarray:
