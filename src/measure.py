@@ -93,10 +93,7 @@ def probe_initial_vector(state: str) -> np.ndarray:
 
 def conditional_displacement_unitary(beta: complex, cutoff: int) -> np.ndarray:
     # McGarry methods:meas reads chi(beta)=<D(beta)> by applying
-    # D(sigma_x beta/2). The generated Sandia argument is s=i beta/2 because
-    # xCD(s) realizes D(-i s), but this ideal check can use beta/2 directly.
-    # Previous local mathematical convention for the emitted xCD:
-    # sandia_xcd_beta = 0.5 * beta
+    # D(sigma_x beta/2). The emitted xCD argument is beta/2 directly.
     math_beta = 0.5 * beta
     plus = np.array([1.0, 1.0], dtype=np.complex128) / math.sqrt(2.0)
     minus = np.array([1.0, -1.0], dtype=np.complex128) / math.sqrt(2.0)

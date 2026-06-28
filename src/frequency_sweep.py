@@ -143,14 +143,13 @@ def sqr_matrix(vartheta: float, varphi: float) -> np.ndarray:
 
 def apply_xcd_fast(
     amplitudes: np.ndarray,
-    sandia_alpha: complex,
+    alpha: complex,
     displacement: DisplacementApplicator,
 ) -> np.ndarray:
     x_amplitudes = Z_TO_X.conj().T @ amplitudes
-    math_alpha = -1.0j * sandia_alpha
     updated = x_amplitudes.copy()
-    updated[0] = displacement.apply(x_amplitudes[0], math_alpha)
-    updated[1] = displacement.apply(x_amplitudes[1], -math_alpha)
+    updated[0] = displacement.apply(x_amplitudes[0], alpha)
+    updated[1] = displacement.apply(x_amplitudes[1], -alpha)
     return Z_TO_X @ updated
 
 

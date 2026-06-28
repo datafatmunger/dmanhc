@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from experiment import add_experiment_arg, apply_toml_defaults, load_toml
+from experiment import add_experiment_arg, apply_toml_defaults
 from gates import cosine_gate_lines, fmt, zcd_line
 
 
@@ -97,7 +97,7 @@ def build_evolution_lines(args: argparse.Namespace) -> list[str]:
 
     lines: list[str] = [
         "// Symmetric McGarry double-well using Sandia/QSCOUT gate vocabulary.",
-        "// Sandia xCD arguments carry McGarry alpha values alpha0 exp(i zeta).",
+        "// Sandia xCD arguments carry direct McGarry SDD displacement coordinates.",
         "// McGarry SQR rotations are decomposed into Sandia Rz gates.",
         "",
         "// Wavepacket preparation: |down>|0> -> |down>|x=-x_min> using zCD.",
@@ -178,23 +178,17 @@ def build_program(args: argparse.Namespace) -> str:
         readout_layout = "// Readout uses a separate probe qubit, matching the QSCOUT notebook pattern."
 
     register_size = max(args.qubit_index, args.probe_qubit_index) + 1
-    requested_readout_beta = complex(args.readout_re_beta, args.readout_im_beta)
-    # Current Sandia/DMANH convention: xCD(s) realizes mathematical D(-i s).
-    # McGarry readout wants D(sigma_x beta/2), so the emitted Sandia argument is s=i beta/2.
-    # Previous local mathematical convention:
-    # readout_sandia_beta = 0.5 * requested_readout_beta
-    readout_sandia_beta = 0.5j * requested_readout_beta
     lines = [
         f"from {SANDIA_USEPULSES_MODULE} usepulses *",
         "",
         "// Hardware-facing characteristic-function measurement program.",
-        "// McGarry methods:meas measures chi(beta) with a mapped xCD beta/2, then measure_all.",
+        "// McGarry methods:meas measures chi(beta) with xCD(beta/2), then measure_all.",
         readout_layout,
         "// Set imMeas=1 to prepend Rx(pi/2), written as R q[probe] 0 pi/2.",
-        "// Defaults target McGarry Eq. xapprox 2PFD: chi beta=i*h with h=0.4.",
-        "// reBeta/imBeta are Sandia xCD arguments mapped from McGarry chi beta / 2.",
-        f"let reBeta {fmt(readout_sandia_beta.real)}",
-        f"let imBeta {fmt(readout_sandia_beta.imag)}",
+        "// Readout variables are direct xCD pulse coordinates. Initialize at",
+        "// the origin; external runners/notebooks should sweep imBeta.",
+        "let reBeta 0",
+        "let imBeta 0",
         f"let imMeas {args.imaginary_readout_loop}",
         "",
         f"register q[{register_size}]",
@@ -265,9 +259,9 @@ def xcd_readout_line(
 #       alpha_0 = pi / (sqrt(2) Lambda). McGarry's symmetric run uses pi / 6.
 #   --alpha-phase-offset
 #       Compiler phase zeta_0 added to McGarry's zeta = k delta Delta t in
-#       Gc_params. The default 0 follows the Sandia/DMANH convention that the
-#       xCD argument directly carries alpha_0 exp(i zeta). The old local
-#       mathematical-displacement convention used -pi/2 here.
+#       Gc_params. With direct xCD displacement coordinates, the default
+#       -pi/2 makes the first cosine gate act on x in the local
+#       Schrodinger-frame plotter.
 #   --vartheta
 #       SQR angle vartheta and trigonometric-gate strength, eqs. R_phi,
 #       cosine_evo, and Gc_params. It satisfies vartheta = B Delta t. McGarry's
@@ -293,19 +287,19 @@ def xcd_readout_line(
 #       different index, e.g. 1, for the two-qubit QSCOUT-notebook layout.
 #
 # Characteristic-function readout:
-#   --readout-re-beta, --readout-im-beta
-#       McGarry measurement coordinate beta in chi(beta) = <D(beta)>. The
-#       emitted Sandia xCD variables are mapped from beta / 2 because the
-#       readout circuit applies D(sigma_x beta / 2). Defaults beta = i 0.4,
-#       matching the 2PFD h = 0.4 choice in eq. xapprox.
 #   --imaginary-readout-loop
 #       Toggle for the optional prepended R(0, pi/2) in the generated readout
-#       block.
+#       block. The generated reBeta/imBeta variables are initialized at zero
+#       and are intended to be swept externally.
 #
 # Output-only parameter:
 #   --output
 #       Filesystem path for the generated Jaqal. This has no McGarry-paper
 #       counterpart.
+#   --export-angles
+#       Filesystem path for the exported notebook angle array. If a directory is
+#       supplied for compatibility with older configs, the compiler writes
+#       angles.npy inside it.
 COMPILER_TOML_MAP = {
     "evolution.steps": "steps",
     "evolution.B_rad_s": "b_rad_s",
@@ -318,24 +312,14 @@ COMPILER_TOML_MAP = {
     "evolution.max_time_ms": "max_time_ms",
     "evolution.dt_us": "dt_us",
     "output.jaqal": "output",
-    "output.notebook": "export_numpy",
-    "readout.re_beta": "readout_re_beta",
-    "readout.im_beta": "readout_im_beta",
+    "output.angles": "export_angles",
+    "output.notebook": "export_angles",
     "readout.imaginary_loop": "imaginary_readout_loop",
 }
 
 
 def _apply_compiler_toml(parser: argparse.ArgumentParser) -> None:
-    apply_toml_defaults(parser, COMPILER_TOML_MAP, path_dests={"output", "export_numpy"})
-    pre, _ = parser.parse_known_args()
-    if getattr(pre, "experiment", None) is None:
-        return
-    cfg = load_toml(pre.experiment)
-    if "readout" in cfg and "betas" in cfg["readout"]:
-        flat = []
-        for pair in cfg["readout"]["betas"]:
-            flat.extend(pair)
-        parser.set_defaults(readout_betas=flat)
+    apply_toml_defaults(parser, COMPILER_TOML_MAP, path_dests={"output", "export_angles"})
 
 
 def parse_args() -> argparse.Namespace:
@@ -378,7 +362,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--delta-rad-s", type=float, default=None, help="Angular harmonic frequency delta.")
     parser.add_argument("--alpha0", type=float, default=math.pi / 6.0)
-    parser.add_argument("--alpha-phase-offset", type=float, default=0.0)
+    parser.add_argument("--alpha-phase-offset", type=float, default=-math.pi / 2.0)
     parser.add_argument("--vartheta", type=float, default=0.8)
     parser.add_argument("--x-min", type=float, default=1.5)
     parser.add_argument("--qubit-index", type=int, default=0)
@@ -396,18 +380,6 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--readout-re-beta",
-        type=float,
-        default=0.0,
-        help="Default readout Re[beta] value in the generated program.",
-    )
-    parser.add_argument(
-        "--readout-im-beta",
-        type=float,
-        default=0.4,
-        help="Default readout Im[beta] value in the generated program. McGarry 2PFD uses h=0.4.",
-    )
-    parser.add_argument(
         "--imaginary-readout-loop",
         type=int,
         choices=[0, 1],
@@ -415,45 +387,39 @@ def parse_args() -> argparse.Namespace:
         help="Default imMeas loop value: 1 emits R q[probe] 0 pi/2 before xCD readout.",
     )
     parser.add_argument(
-        "--export-numpy",
+        "--export-angles",
         type=Path,
         default=None,
-        metavar="DIR",
-        help="Export angles.npy and betas.npy to DIR for notebook consumption.",
+        metavar="PATH",
+        help=(
+            "Export the notebook angle array to PATH. If PATH is a directory, "
+            "write angles.npy inside it for compatibility with older configs."
+        ),
     )
     parser.add_argument(
-        "--readout-betas",
-        type=float,
-        nargs="+",
+        "--export-numpy",
+        dest="export_angles",
+        type=Path,
         default=None,
-        metavar="RE IM",
-        help=(
-            "McGarry beta values as re1 im1 re2 im2 ... pairs for the "
-            "notebook beta sweep. Requires --export-numpy."
-        ),
+        metavar="PATH",
+        help=argparse.SUPPRESS,
     )
     _apply_compiler_toml(parser)
     return resolve_evolution_args(parser.parse_args())
 
 
-def export_numpy(args: argparse.Namespace) -> None:
-    out_dir = args.export_numpy
-    out_dir.mkdir(parents=True, exist_ok=True)
+def export_angles(args: argparse.Namespace) -> None:
+    output = args.export_angles
+    if output.suffix == ".npy":
+        angles_path = output
+    else:
+        angles_path = output / "angles.npy"
+    angles_path.parent.mkdir(parents=True, exist_ok=True)
 
     angles = build_angles(args)
-    np.save(out_dir / "angles.npy", angles)
+    np.save(angles_path, angles)
 
-    if args.readout_betas is not None:
-        flat = args.readout_betas
-        if len(flat) % 2 != 0:
-            raise ValueError("--readout-betas requires an even number of floats (re im pairs)")
-        betas = np.array(flat, dtype=float).reshape(-1, 2)
-    else:
-        betas = np.array([[args.readout_re_beta, args.readout_im_beta]])
-    np.save(out_dir / "betas.npy", betas)
-
-    print(out_dir / "angles.npy")
-    print(out_dir / "betas.npy")
+    print(angles_path)
 
 
 def main() -> None:
@@ -463,8 +429,8 @@ def main() -> None:
     args.output.write_text(text)
     print(args.output)
 
-    if args.export_numpy is not None:
-        export_numpy(args)
+    if args.export_angles is not None:
+        export_angles(args)
 
 
 if __name__ == "__main__":

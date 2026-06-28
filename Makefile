@@ -5,7 +5,7 @@ EXPERIMENTS ?= experiments
 
 .DEFAULT_GOAL := dmanh
 
-.PHONY: clean compile plots comparison dmanh dmanh-notebook dmanh-vartheta-1p6 dmanh-frequency-sweep non-abelian-flux
+.PHONY: clean compile plots comparison dmanh dmanh-notebook dmanh-vartheta-1p6 dmanh-frequency-sweep readout-x-trace non-abelian-flux
 
 clean:
 	rm -rf $(BUILD_DIR)
@@ -48,3 +48,5 @@ dmanh-frequency-sweep:
 	$(PYTHON) $(SRC)/compiler.py $(EXPERIMENTS)/dmanh_frequency_sweep.toml
 	$(PYTHON) $(SRC)/frequency_sweep.py $(EXPERIMENTS)/dmanh_frequency_sweep.toml
 
+readout-x-trace:
+	$(PYTHON) $(SRC)/readout_x_trace.py

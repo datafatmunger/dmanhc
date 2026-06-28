@@ -7,7 +7,7 @@ delta_rad_s = 3.141592653589793e3
 alpha0 = 0.5235987755982989  # pi/6
 vartheta = 0.8
 x_min = 1.5
-alpha_phase_offset = 0
+alpha_phase_offset = -1.5707963267948966
 
 [output]
 jaqal = "build/double_well.jaqal"

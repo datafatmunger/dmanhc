@@ -97,7 +97,7 @@ python src/compiler.py \
   --alpha0 0.18512 \
   --vartheta 0.8 \
   --x-min 1.25895 \
-  --alpha-phase-offset 0
+  --alpha-phase-offset -1.5707963267948966
 
 python src/plots.py \
   --jaqal build/dmanh.jaqal \
@@ -184,7 +184,7 @@ where `theta = pi/2` selects the imaginary part of the characteristic function. 
 | `--alpha0` | displacement amplitude scale `alpha_0` | `pi / 6` |
 | `--vartheta` | cosine-gate angle, with `B = vartheta / Delta t` | `0.8` |
 | `--x-min` | initial left-well displacement target | `1.5` |
-| `--alpha-phase-offset` | optional extra phase added to McGarry `zeta = k Delta t`; default follows Sandia/DMANH direct xCD convention | `0` |
+| `--alpha-phase-offset` | optional extra phase added to McGarry `zeta = k Delta t`; default aligns direct xCD coordinates with the local Schrodinger-frame `x` potential | `-pi/2` |
 
 The Makefile targets use angular units directly. The compiler still accepts `--max-time-ms`, `--dt-us`, and `--delta-hz` for manual compatibility runs, but the experiment targets avoid those aliases so the fit-to-compiler map stays explicit.
 
@@ -229,11 +229,9 @@ These are hardware addressing/calibration values. They do not change the abstrac
 
 | Parameter | Meaning | Default |
 |---|---:|---:|
-| `--readout-re-beta` | real part of requested characteristic-function coordinate | `0.0` |
-| `--readout-im-beta` | imaginary part of requested characteristic-function coordinate | `0.4` |
 | `--imaginary-readout-loop` | when `1`, prepend `R q[probe] 0 pi/2` before readout | `1` |
 
-The generated readout `xCD` is mapped from half of the requested characteristic-function coordinate because the probe protocol applies `D(sigma_x beta / 2)`. With the current Sandia/DMANH convention, the Sandia argument `s` is converted to the mathematical displacement `D(-i s)`.
+The generated readout variables are direct `xCD` pulse coordinates and are initialized at the origin with `reBeta=0`, `imBeta=0`. The position-readout sweep should be supplied by the notebook or runner by varying `imBeta` through the origin while keeping `reBeta=0`.
 
 ## Gate conventions
 

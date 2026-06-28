@@ -7,14 +7,11 @@ delta_rad_s = 1.29817e3
 alpha0 = 0.18512012242326523  # pi / (12 * sqrt(2))
 vartheta = 0.8
 x_min = 1.25895
-alpha_phase_offset = 0
-
-[readout]
-betas = [[0, -0.4], [0, -0.2], [0, 0], [0, 0.2], [0, 0.4]]
+alpha_phase_offset = -1.5707963267948966
 
 [output]
 jaqal = "build/dmanh.jaqal"
-notebook = "build/notebook"
+angles = "build/dmanh_angles.npy"
 
 [plots]
 times_ms = [0, 4.081408, 7.691885]
